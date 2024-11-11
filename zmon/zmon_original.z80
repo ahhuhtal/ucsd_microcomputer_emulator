@@ -1,0 +1,1411 @@
+;                                 typed from hardcopy of ZMON.PRN on 10 Nov 2024
+;                                           modified for assembler compatibility
+;                                                               ZMON.Z80 7/14/85
+; CP/M MONITOR USED WITH ONE BOARD COMPUTER FOR
+; UCSD EXTENSION, DESIGNED BY CHRIS POULOS AND STUDENTS
+; ON 11/30/84
+; MODIFIED FOR 25 LINES (25TH IS STATUS ONLY)
+; MODIFIED 5/28/85 WITH PIO DRIVER SOFTWARE
+; INTERNAL REGISTER ADDRESSES IN THE CRT9028
+; CONTROLLER
+RESET   EQU     6       ;CHIP RESET ADDRESS
+TOSADD  EQU     8       ;TOP OF SCREEN ADDRESS
+CURLO   EQU     9       ;CURSOR LOW ADDRESS
+CURHI   EQU     0AH     ;CURSOR HIGH ADDRESS
+FILADD  EQU     0BH     ;FILL ADDRESS
+ATTDAT  EQU     0CH     ;ATTRIBUTE DATA
+CHAR    EQU     0DH     ;CHARACTER REGISTER
+MODE    EQU     0EH     ;MODE REGISTER
+BLANK   EQU     ' '     ;BLANK SPACE
+SCLUP   EQU     01H     ;SCROLL UP = CONTROL A
+CLRSRN  EQU     1AH     ;CLEAR SCREEN = CONTROL Z
+EQL     EQU     3DH     ;EQUAL CHAR
+;
+; OUTPUT PORT ADDRESSES USED TO COMMUNICATE WITH
+; THE CRT9028 CONTROLLER
+;
+DATA    EQU     44H     ;DATA PORT
+ADR     EQU     45H     ;ADDRESS PORT
+; MEMORY LOCATIONS TO STORE CRT SCREEN INFO
+;
+MCURLO  EQU     0FF00H  ;SAVE CURSOR LOW VALUE
+MCURHI  EQU     0FF01H  ;SAVE CURSOR HIGH VALUE
+MTOSAD  EQU     0FF02H  ;SAVE TOP OF SCREEN ADDR
+CHRROW  EQU     0FF03H  ;SAVE ESC ROW VALUE
+ESCFL1  EQU     0FF04H  ;ESCAPE FLAG #1
+ESCFL2  EQU     0FF05H  ;ESCAPE FLAG #2
+ESCFL3  EQU     0FF06H  ;ESCAPE FLAG #3
+;
+; KEYBOARD I/O PORT DEFINITIONS
+;
+PIODAB  EQU     41H     ;KEYBOARD INPUT PORT
+PIOCMB  EQU     43H     ;PIO CH B CONTROL
+KBIN    EQU     41H     ;KEYBOARD INPUT PORT
+LED     EQU     0       ;DISPLAY ASCII ON LEDS
+;
+; SINGLE DENSITY BOOT FOR WD2793 FLOPPY CONTROLLER
+;
+FDSTAT  EQU     48H     ;STATUS CHANNEL
+FDCMMD  EQU     48H     ;COMMAND CHANNEL
+FDTRK   EQU     49H     ;TRACK REG
+FDSECT  EQU     4AH     ;SECTOR REG
+FDDATA  EQU     4BH     ;DATA REG
+FDREST  EQU     0DH     ;RESTORE (VERIFY,HEAD LOAD,6MS)
+FDREAD  EQU     88H     ;READ COMMAND
+FORCE   EQU     0D0H    ;FORCE INTERRUPT COMMAND
+;
+STAT    EQU     1               ;STATUS PORT
+DAV     EQU     02H             ;BIT 0 MASK FOR DATA A VA
+TBE     EQU     01H             ;BIT 7 MASK FOR TX BUFFER
+LF      EQU     0AH
+NBRKPT  EQU     5
+CR      EQU     0DH
+TEMPS   EQU     16H
+DUPC    EQU     0FFFFH
+DUHL    EQU     0FFF7H
+BPMRK   EQU     0BH
+LENRGS  EQU     1AH
+CASE    EQU     0
+ESC     EQU     1BH
+ALT     EQU     7DH
+RSTLC   EQU     30H
+PF      EQU     6
+DUAF    EQU     0FFFDH
+DUAF2   EQU     0FFEDH
+DUBC    EQU     0FFFBH
+DUBC2   EQU     0FFEBH
+DUDE    EQU     0FFF9H
+DUDE2   EQU     0FFE9H
+DUIN    EQU     0FFEFH
+DUIX    EQU     0FFF3H
+DUIY    EQU     0FFF1H
+DUSP    EQU     0FFF5H
+B2F     EQU     5
+;
+;
+; ENTER THE MONITOR FROM RESET.
+; COLD START ENTRY.
+; ZEROES THE BREAKPOINT STACK POINTER.
+; SAVES ALL OTHER REGISTERS EXCEPT THE PROGRAM COUNTER,
+; BUT DOES NOT DISPLAY THEM.
+;
+        ORG     0F800H          ;TEST VERSION AT 8000H
+;
+ZMON:   JP      CSTART
+        JP      CRTOUT          ;JP TO HERE FROM ZBIOS
+        JP      KBINPT          ;JP TO HERE FROM ZBIOS
+        JP      KBHI            ;JP TO HERE FROM ZBIOS
+        JP      PMSG            ;JP TO HERE FROM ZBIOS
+;
+CSTART: LD      SP,0FFFFH       ;SET SP
+        CALL    INTCRT
+        LD      A,1             ;FLAG FOR COLD START
+CST1:   PUSH    AF              ;SIMULATE UPC
+        PUSH    AF              ;USER-F-REGISTER
+        JR      COMMON
+;
+; WARM START ENTRY.  INITIALIZES THE BREAKPOINT
+; STORAGE POINTER.  SAVES ALL REGISTERS EXCEPT
+; THE PROGRAM COUNTER, BUT DOES NOT DISPLAY THEM.
+;
+WSTART: PUSH    AF              ;SIMULATE UPC
+        PUSH    AF              ;UAF
+        LD      A,80H           ;FLAG:
+        JR      COMMON          ;WARM-START ENTRY
+;
+; BREAKPOINT ENTRY.  INITIALIZES NOTHING.
+; SAVES ALL REGISTERS AND DISPLAYS THEM.
+;
+SVMS:   EX      (SP),HL         ;ADJUST BRKPT
+        DEC     HL              ;RET ADDR
+        EX      (SP),HL
+        PUSH    AF              ;UAF
+        SUB     A               ;FLAG:
+                                ;BREAKPOINT ENTRY;
+;
+;
+COMMON: PUSH    BC              ;UBC
+        LD      B,A             ;ENTRY FLAG
+        PUSH    DE              ;UDE
+        PUSH    HL              ;UHL
+;
+; PLACE SYS STACK AT HIGHEST PAGE OF
+; AVAILABLE RAM.
+; ALLOW ROOM FOR TEMP STORAGE.
+;
+        LD      HL,00FFH-TEMPS ;LOOK FOR RAM AT HIGHEST P
+COM1:   DEC     H
+        LD      A,(HL)
+        INC     (HL)
+        CP      (HL)            ;DID IT CHANGE?
+        JR      Z,COM1
+        DEC     (HL)            ;YES.  RESTORE IT.
+;
+        LD      A,B             ;ENTRY FLAG
+        EX      DE,HL
+        LD      HL,9
+        ADD     HL,SP           ; -> UPC, HI BYTE
+        LD      BC,10
+        LDDR
+;
+        INC     DE              ;-> UHL,LO ON SYS STK
+        EX      DE,HL
+        LD      SP,HL           ;CURRENT SYS SP
+        EX      DE,HL
+        LD      BC,DUPC-DUHL+3
+        ADD     HL,BC           ;HL = USER SP
+        PUSH    HL              ;USP
+        PUSH    IX              ;UIX
+        PUSH    IY              ;UIY
+        EX      DE,HL
+        ADD     HL,BC
+        LD      C,L             ;SAVE
+        DEC     HL
+        PUSH    HL
+        POP     IX
+        CP      1               ;ENTRY?
+        JR      C,COM3          ;SKIP IF VIA BP.
+        LD      (HL),C          ;BP PNTR, LO BYTE
+        INC     HL
+        LD      (HL),0          ;BP-STACK ENDMARK
+;
+COM3:   LD      A,I
+        LD      H,A
+        LD      L,0
+        JP      PO,COM4
+        INC     L
+COM4:   PUSH    HL              ;UIN
+        EX      AF,AF'
+        PUSH    AF              ;UAF'
+        EX      AF,AF'
+        EXX
+        PUSH    BC              ;UBC'
+        PUSH    DE              ;UDE'
+        PUSH    HL              ;UHL'
+        EXX
+;
+; IF CY IS SET, ENTRY WAS VIA A BREAKPOINT
+        LD      HL,HEAD
+        CALL    NC,PMSG
+        LD      BC,5086H        ;'P'+CASE SHL 8 +86H
+        CALL    C,SUBR3         ;DISPLAY THE PC.
+;
+;CLEAR ALL BREAKPOINTS
+;
+CLBP:   PUSH    IX
+        POP     HL              ;POINTS TO BPSP,LO
+        LD      L,(HL)          ;BPSP NOW IN HL
+;
+CL1:    LD      A,(HL)          ;BP STK EMPTY?
+        CP      BPMRK           ;IF BPMRK, BP IS SET
+        JR      NZ,CL2
+;
+        INC     (HL)            ;BP-ERASED MARK
+        DEC     HL
+        LD      D,(HL)
+        DEC     HL
+        LD      E,(HL)
+        DEC     HL
+        LDD                     ;RESTORE MEM CONTENTS
+        JR      CL1
+;
+CL2:    LD      A,L
+        DEC     HL
+        LD      (HL),A          ;ADJUST BPSP
+;
+        LD      DE,-LENRGS      ;FOR THE BENEFIT
+        ADD     HL,DE           ;OF ERROR & ESCPE
+        LD      SP,HL           ;RE-INITIALIZE SP
+;
+; GET 1-BYTE COMMAND.
+; RETURNS VALUE IN HL & JUMPS TO THAT ADDR.
+;
+        CALL CRLF
+CMND:   LD      DE,CMND         ;SET-UP RETURN
+        PUSH    DE
+CMND1:  LD      HL,PRMPT        ;RE-ENTRY POINT
+        CALL    PMSG            ;FOR RECURSION
+; HL NOW PNTS TO THE COMMAND TABLE.
+;
+; GET THE COMMAND.
+; DE GETS THE FIRST ALPHA CHAR LESS 'D'.
+;
+        CALL    SKSG0           ;GET NON-SPACE
+        RET     Z               ;IF CR, IGNORE.
+        CP      'B'+CASE        ;CK FOR BOOT COMMAND
+        JP      Z,BOOT          ;GO TO BOOT FROM DISK
+        SUB     'D'+CASE        ; < 'D'?
+        JR      C,ERROR
+        CP      'W'-'D'+1       ; > 'W'?
+        JR      NC,ERROR
+        LD      E,A
+        LD      D,0
+;
+        LD      C,D             ;INITIALIZE FOR SUBR
+        EX      DE,HL
+        ADD     HL,HL           ;TIMES 2
+        ADD     HL,DE           ; + TBL ADDR
+        LD      E,(HL)
+        INC     HL
+        LD      D,(HL)
+        EX      DE,HL
+        CALL    SKSG0           ;NEXT CMND GHAR
+        CP      'M'+CASE        ;(USED IN SUBST & DISPL)
+        JP      (HL)
+;
+; ERROR & ESCAPE.  RETURNS TO CMND WITH SP
+; POINTING TO SAVED-REG AREA (UHL').
+;
+ERROR:  LD      A,'?'
+        CALL    PCHR
+ESCPE:  JR      CLBP            ;CLEAR ANY BRKPTS
+;
+; PRINT THE 2 BYTES IN (HL) & (HL-1).
+; DECREMENTS HL BY 2.  ALTERS A.
+; PRESERVES OTHER REGS.
+;
+P2NMS:  CALL    PNM
+        DEC     HL
+        CALL    PNM
+        DEC     HL              ;(CONTINUE BELOW)
+;
+; PRINT SPACE.  ALTERS A.
+;
+SPACE:  LD      A,20H           ;(CONTINUE BELOW)
+;
+; PRINT THE CHARACTER IN THE A-REGISTER.
+; (CHKS INPUT FOR ESC.) PRESERVES ALL REGS.
+;
+PCHR:   PUSH    AF              ;SAVE THE CHAR
+PC1:    AND     7FH
+        CP      ESC
+        JR      Z,ESCPE
+        CP      ALT             ;ALT MODE?
+        JR      Z,ESCPE
+        CALL    KBHI
+        JR      NZ,PC1          ;HAVE AN INPUT CHARACTER
+PC2:    POP     AF
+        PUSH    HL
+        PUSH    AF
+        AND     7FH
+        CALL    CRTOUT
+        LD      HL,LFNN
+        CP      CR
+        CALL    Z,PMSG
+        CP      '<'             ;RECURSIVE CALL
+        JR      NZ,PC3          ;ON CMND?
+        POP     AF
+        LD      A,CR            ;YES. CONVERT
+        PUSH    AF              ;'<' TO A CR.
+        PUSH    DE
+        PUSH    BC
+        CALL    CMND1
+        POP     BC
+        POP     DE
+PC3:    POP     AF
+        POP     HL
+        RET
+;
+; GET CHARACTER. RETURNS IT IN A.
+; ALTERS F.
+;
+GCHR:   CALL    KBINPT
+        CALL    PCHR
+        JR      Z,GCHR          ;IF NULL DON'T RETURN
+        CP      61H             ;SEE IF LOWER CASE
+        JR      C,SK2           ;LESS THAN LC A
+        CP      7BH             ;SEE IF MORE THAN Z
+        JR      NC,SK2          ;NOT A LOWER CASE
+        SUB     20H             ;CONVERT TO UPPER CASE
+SK2:    RET
+;
+; CRLF. ALTERS A ONLY.
+;
+CRLF:   LD      A,CR
+        JR      PCHR
+;
+; LOADS HL WITH SOURCE ADDR, BC & DE
+; WITH THE INCREMENT.  ENDS WITH A CRLF.
+;
+L2NCR0: SUB     A
+;
+L2NCR:  CALL    LD2N
+;
+; SKIP INITIAL SPACES.
+; IF DELIMITER NOT A CR, ERROR
+;
+SKSGCR: CALL    SKSG            ;WAIT FOR NON-SPACE
+        JR      NZ,ERROR        ;IF NOT CR, ERROR
+        EX      DE,HL
+        RET
+;
+; PRINT THE NUMBER IN HL, FOLLOWED BY A COLON.
+; PRESERVES ALL REGISTERS EXCEPT A.
+;
+PCADDR: CALL    CRLF
+;
+PADDR:  CALL    PNHL
+        LD      A,':'
+        JR      PCHR
+;
+; COMMAND
+;
+VERIF:  CALL    L3NCR           ;GET 3 OPERANDS
+;
+; COMPARES TWO AREAS OF MEMORY.  ENTER WITH
+; SOURCE IN HL, DESTINATION IN DE & COUNT
+; IN BC.  ALTERS ALL REGISTERS.
+;
+VRFY:   LD      A,(DE)
+        CPI                     ;COMPARE TO SOURCE
+        DEC     HL
+        CALL    NZ,PNHL         ;PRINT SOURCE ADDR
+        CALL    NZ,PSNM         ; & CONTENTS
+        EX      DE,HL
+        CALL    NZ,PSNM         ; & DEST CONTENTS
+        CALL    NZ,PSNHL        ; & DEST ADDR
+        CALL    NZ,CRLF
+        EX      DE,HL
+        INC     HL
+        INC     DE
+        RET     PO             ;IF BC=0, DONE.
+        JR      VRFY
+;
+; COMMAND
+;
+MOVE:   CALL    L3NCR           ;OPERANDS
+        CALL    MVE             ;MOVE IT
+        JR      VRFY
+;
+; LOAD TWO NUMBERS. LOADS DE WITH THE BEGINNING
+; ADDR, N1. LOADS BC & HL WITH THE INCREMENT
+; N2-N1+1 (OR WITH N2 IF THE OPR IS 'S').
+; RETURNS WITH LAST DELIMITER IN A.
+;
+LD2N:   CALL    GNHL            ;N1 TO HL, DELIM TO A
+        EX      DE,HL           ;SAVE N1 IN DE
+        CALL    SKSG            ;GET NEXT NON-SPACE
+        CP      'S'+CASE        ;SWATH?
+        JR      NZ,L2N1
+;
+        CALL    GNHL0           ;YES. INCREMENT TO HL
+        JR      L2N2
+;
+L2N1:   CALL    GNHL            ;INCREMENT
+        OR      A               ;CLEAR CY
+        SBC     HL,DE           ;N2-N1
+        INC     HL              ;INCLUDE END POINT
+L2N2:   LD      B,H
+        LD      C,L             ;BC GETS THE INCRM
+        RET
+;
+; LOAD 3 OPERANDS. HL GETS THE SOURCE, BC
+; THE INCREMENT, ADE DE THE 3RD OPERAND.
+;
+L3NCR:  CALL    LD2N
+; (CONTINUE BELOW)
+;
+; ENTER WITH SPACE OR THE FIRST DIGIT
+; OF A NUMBER IN A. LOADS HL
+; WITH A NEW NUMBER & THEN EXCHANGES
+; DE & HL. FINISHES WITH A CRLF.
+;
+L1NCR:  CALL    GNHL            ;SKIP SPACES, LOAD HL
+        JR      SKSGCR          ;WAIT FOR A CR
+;
+; CLEARS HL. IF ENTERED WITH HEX CHAR IN A,
+; SHIFTS IT INTO HL. O/W, IGNORES LEADING
+; SPACES. FIRST CHAR MUST BE HEX. CONTINUES
+; SHIFT UNTIL A NON-HEX CHAR RECEIVED & THEN
+; RETURNS WITH THE LATTER IN A.
+; PRESERVES B,C,D,E.
+;
+;
+GNHL0:  SUB     A
+;
+GNHL:   PUSH    BC              ;SAVE
+        LD      HL,0            ;CLR BUFFER
+; STRIP LEADING SPACES & GET CHAR
+        CALL    SKSG
+; FIRST CHAR MUST BE HEX
+        CALL    HEXSH           ;IF HEX, SHIFT INTO HL
+        JP      C,ERROR         ;O/W, ERROR
+GN1:    CALL    GCHR
+        CALL    HEXSH           ;IF HEX SHIFT INTO HL
+        LD      A,B             ;RESTORE CHAR
+        JR      NC,GN1   ;IF HEX, CONTINUE
+        POP     BC              ;IF NON-HEX, DONE
+        RET
+;
+;
+; IF A CONTAINS HEX CHAR, SHIFTS BINARY EQUIVALENT
+; INTO HL. IF NOT HEX, RET WITH CY SET. SAVES
+; ORIGINAL CHAR IN B
+;
+HEXSH:  LD      B,A
+        SUB     '0'             ; < '0'?
+        RET     C
+        ADD     A,'0'-'G'+CASE
+        RET     C
+        SUB     'A'-'G'
+        JR      NC,HX1          ;OK IF >= 'A'
+        ADD     A,07H; 'A'+CASE-'9'+1
+        RET     C
+HX1:    ADD     A,'9'+1-'0'
+; THE A-REG NOW CONTAINS THE HEX DIGIT IN BINARY.
+; (THE HIGH-ORDER NIBBLE OF A IS 0.)
+HXSH4:  ADD     HL,HL           ;SHIFT 4 BITS INTO HL
+        ADD     HL,HL
+        ADD     HL,HL
+        ADD     HL,HL
+        OR      L
+        LD      L,A
+        RET
+;
+; RETURNS WITH A NON-SPACE IN THE A-REG.
+; IF ENTERED WITH A-REG CONTAINING A NULL
+; OR A SPACE, GETS NEW CHARS UNTIL FIRST
+; NON-SPACE OCCURS. ALTERS AF.
+;
+SKSG0:  SUB     A
+;
+SKSG:   OR      A               ;DOES A CONTAIN NULL?
+SK1:    CALL    Z,GCHR          ;YES
+        CP      20H             ;SPACE?
+        JR      Z,SK1           ;YES, KEEP LOOKING
+        CP      ','             ;PASS BY COMMAS TOO
+        JR      Z,SK1
+        CP      CR              ;RETURNS ZFLAG IF CP
+        RET
+;
+; PRINT SPACE FOLLOWED BY THE NUMBER POINTER
+; TO BY HL. ALTERS A ONLY.
+;
+PSNM:   CALL    SPACE
+; (CONTINUE BELOW)
+;
+; PRINTS THE NUMBER POINTED TO BY HL.
+; PRESERVES ALL REGISTERS BUT A.
+;
+PNM:    LD      A,(HL)
+        JR      P2HEX
+;
+; PRINT THE NUMBER IN HL.
+; PRESERVES ALL BUT A.
+;
+PSNHL:  CALL    SPACE
+;
+PNHL:   LD      A,H
+        CALL    P2HEX
+        LD      A,L
+;                               ;(CONTINUE BELOW)
+;
+; PRINT THE NUMBER IN THE A-REGISTER.
+; PRESERVES ALL REGISTERS.
+;
+P2HEX:  CALL    P1HEX
+        RRA
+P1HEX:  RRA
+        RRA
+        RRA
+        RRA
+        PUSH    AF
+        AND     0FH             ;MASK
+        CP      10D             ; <= 9?
+        JR      C,PH1
+        ADD     A,7             ;A THRU F
+PH1:    ADD     A,30H           ;ASCII BIAS
+        CALL    PCHR            ;PRINT IT
+        POP     AF
+        RET
+;
+; PRINT MESSAGE. ENTER WITH ADDR OF MSG
+; IN HL. THE MESSAGE IS TERMINATED
+; BY A NULL (00) CHARACTER OR ONE WHOE
+; BIT 7 WAS SET.
+; PRESERVES FLAGS, INCREMENTS HL.
+;
+PMSG:   PUSH    AF      ;SAVE
+PS1:    LD      A,(HL)
+        INC     HL
+        OR      A       ;NULL CHAR, EXIT
+        JR      Z,PS2
+        RLA
+        JR      C,PS2
+        RR      A
+        CALL    PCHR
+        JR      PS1
+PS2:    POP     AF
+        RET
+;
+; MOVE FROM ONE LOCATION TO ANOTHER. ENTER
+; WITH SOURCE ADDR IN HL, DEST IN DE, BYTE
+; COUNT IN BC. PRESERVES ALL REGISTERS.
+;
+MVE:    PUSH    HL              ;SOURCE
+        PUSH    DE              ;DEST
+        PUSH    BC              ;BYTE COUNT
+        LDIR
+        POP     BC
+        POP     DE
+        POP     HL
+        RET
+;
+; COMMAND
+;
+; GO <CR> EXECUTION BEGINS AT USER PC.
+;
+; COMMAND
+;
+; GO <ADDR1>/<ADDR2> ... <ADDRN>
+; EXECUTION BEGINS AT ADDR1 WITH BREAKPOINTS SET
+; AT ADDR2,...,ADDRN.
+;
+GO:
+; B GETS NBRKPT+1 (MAX. NUMBER OF BP + 1)
+; C, THE BREAKPOINT FLAG, GETS 0 (NO BP SET)
+        LD      BC,0600H; NBRKPT+1 SHL 8 +0
+GO1:    CALL    SKSG            ;WAIT FOR NON-SPACE
+        JR      Z,RETRN         ;RETURN IF C/R
+        CP      '/'             ;BP?
+        JR      NZ,GO3
+        LD      C,A             ;SET BRKPT FLAG (2FH)
+        LD      HL,RSTLC        ;TRANSFER
+        LD      (HL),0C3H       ;'JP SVMS' TO
+        LD      HL,SVMS
+        LD      (RSTLC+1),HL    ;RST LOC
+        SUB     A
+GO3:    CALL    GNHL            ;GET ADDR
+        BIT     5,C             ; FLAG SET?
+        EX      DE,HL
+        PUSH    IX
+        POP     HL
+        JR      Z,GO5           ;JUMP IF NO BP
+;
+        DEC     B               ;IF TOO MANY BP,
+        JP      Z,ERROR         ;ERROR.
+        LD      L,(HL)          ;HL = BPSP
+;
+        INC     HL              ;BUMP BPSP
+        EX      DE,HL           ;DE=BPSP, HL= BP ADDR
+        LDI
+        DEC     HL
+        LD      (HL),0C7H+RSTLC ;RST INSTRUCTION
+        EX      DE,HL           ;HL=BPSP
+        LD      (HL),E          ;BP ADDR TO STACK
+        INC     HL
+        LD      (HL),D
+        INC     HL
+        LD      (HL),BPMRK      ;PUNCTUATION (BP SET)
+        LD      (IX+0),L
+        JR      GO1
+; CHANGE USER PC
+GO5:    DEC     HL
+        LD      (HL),D
+        DEC     HL
+        LD      (HL),E
+        JR      GO1             ;BACK FOR MORE
+;
+RETRN:   POP     HL             ;STRIP ADDR FROM STK
+        POP     HL              ;UHL'
+        POP     DE              ;UDE'
+        POP     BC              ;UBC'
+        POP     AF              ;UAF'
+        EXX
+        EX      AF,AF'
+;
+        POP     AF              ;UIN
+        LD      I,A             ; UI
+        DI
+        JR      NC,RT1
+        EI
+;IFF NOW RESTORED
+RT1:    POP     IY              ;UIY
+        POP     IX              ;UIX
+        POP     DE              ;USP
+;
+; COPY THE REMAINDER OF THE SYS STACK
+; TO THE USER STACK, IF THIS TRANSFER
+; IS MADE WITHOUT ERROR, SWITCH TO THE
+; USER STACK.  OTHERWISE, RETAIN THE
+; SYSTEM STACK.
+;
+        LD      HL,10D
+        LD      B,L
+        ADD     HL,SP
+        EX      DE,HL
+RT2:    DEC     DE
+        DEC     HL
+        LD      A,(DE)
+        LD      (HL),A
+        CP      (HL)
+        JR      NZ,RT3
+        DJNZ    RT2
+        LD      SP,HL;
+;
+RT3:    POP     HL
+        POP     DE
+        POP     BC
+        POP     AF
+        RET
+;
+; COMMAND. DISPLAY REGISTERS.
+;
+; DR
+;
+; COMMAND. DISPLAY MEMORY.
+;
+; DM <STARTING ADDR> <ENDING ADDR OR SWATH>
+;
+DISPL:  LD      BC,4180H        ;'A'+CASE SHL 8 +80H
+        JP      NZ,SUBR2        ;IF NOT 'M', DR
+;
+DSPM:   CALL    L2NCR0          ;GET OPERANDS
+DSPM1:  LD      D,16            ;BYTE COUNT
+        CALL    PCADDR          ;ADDRESS
+        PUSH    HL              ;SAVE BEG OF LINE ADR
+DM2:    CALL    PSNM            ;MEM CONTENTS
+        CPI                     ;INC HL & DEC BC
+        jp      pe,dspm3        ;not done with user requested range
+        pop     de              ;begin line adr to de
+        push    de
+        ld      a,l             ;get least significant part of address
+        sub     e               ;a:=a(eaddr)-l(saddr)
+        ld      d,a             ;de:=# bytes
+        pop     hl
+        call    pascii          ;and print the ascii for this round
+        jp      crlf            ;jp here and return from crlf
+dspm3:  dec     d
+        jr      nz,dspm2        ;not ready to put out ascii characters
+        push    hl              ;save current adr
+        pop     de              ;put it de temporarily
+        pop     hl              ;begin line adr to hl
+        push    hl              ;push begin line adr back
+        dec     sp
+        dec     sp              ;point stack at current adr
+        ld      d,16            ;number of ascii bytes to print
+        call    pascii          ;and print the ascii characters
+        pop     hl              ;current adr back
+        pop     de              ;stack cleanup
+        jr      dspm1           ;continue until done
+dspm2:  ld      a,d             ;a:=counter
+        and     3               ;a mod 3
+        call    z,space         ;if so separate the columns
+        call    z,space
+        jr      dm2
+; print ascii characters to right of display memory display
+pascii: push    hl
+        call    space
+        call    space
+doasc1: ld      a,(hl)          ;get character
+        or      a,a             ;set flags
+        jp      m,noktp         ;no char 80 or higher
+        cp      ' '             ;if control character
+        jp      m,noktp
+        cp      7bh             ;or some character above 7e
+        jp      p,noktp
+        cp      03ch            ;dont allow 3c,3d,3e
+        jr      z,noktp
+        cp      03dh
+        jr      z,noktp
+        cp      03eh
+        jr      nz,oktp
+noktp:  ld      a,'.'           ;only print a period
+oktp:   call    pCHR            ;other wise print character
+        inc     hl              ;point to next location
+        dec     d               ;decrement counter
+        jr      nz,doasc1       ;and do it again if not zero
+        pop     hl
+        ret
+;
+;       FILL MEMORY WITH A CONSTANT
+;       SYNTAX:  F <ADDR1> <ADDR2> <CON> OR F <ADDR1> S <LEN> <CON>
+;
+FILL:   call    l3ncr           ;load three params
+fill2:  ld      (hl),e          ;fill byte is in de
+        inc     hl
+        dec     bc
+        ld      a,c             ;check for done
+        or      a,b
+        jr      nz,fill2
+        jp      crlf
+;
+; COMMAND. SUBSTITUTE MEMORY LOCATION.
+;
+; SM <ADDR>
+;
+; COMMAND. SUBSTITUTE USER-REGISTER.
+;
+; S<REGISTER NAME>
+;
+; REGISTER NAMES: P [PC], S [SP],
+; A, F, B, C, D, E, H, [HL],
+; I, N [IFF], X [IX], Y [IY],
+; A',F',B',C',D',E',H' [HL'].
+;
+SUBST:  JR      NZ,SUBR         ;IN NOT 'M', SR
+;
+SUBM:   SUB     A
+        LD      B,A             ;1-BYTE MASK
+        CALL    L1NCR
+        EX      DE,HL           ;HL GETS ADDR
+SM1:    CALL    Z,PCADDR
+        CALL    Z,SPACE
+; PRINT CURRENT VALUE, REQUEST NEW VALUE &
+; PRINT IT IF GIVEN
+        CALL    GSUBV
+        RET     Z               ;iF CR, DONE.
+        INC     HL
+        LD      A,7             ;PRINT ADDRESS IF IT
+        AND     L               ;IS A MULTIPLE OF 8
+        JR      SM1
+;
+SUBR:   LD      B,A
+        CALL    GCHR
+        CP      ''''
+        JR      NZ,SR2
+        INC     C               ;TURN ON THE PRIME-FLAG
+SUBR2:  SUB     A
+SR2:    CALL    SKSGCR          ;WAIT FOR CR
+SR3:    LD      A,B
+        SUB     'A'+CASE        ;CHECK THE RANGE
+        JP      C,ERROR
+        CP      'Y'-'A'+1
+        JP      NC,ERROR
+        LD      E,A
+        LD      D,0
+        LD      HL,RGTBL
+        ADD     HL,DE
+        LD      A,(HL)
+        OR      A
+        JR      Z,SR6           ;IF ENTRY = 0, SKIP
+        LD      E,0
+        BIT     0,C             ;PRIME?
+        JR      Z,SR4
+        BIT     PF,(HL)         ;YES. PRIMEABLE REG?
+        JR      Z,SR6           ;IF NOT, SKIP.
+        LD      E,DUAF-DUAF2
+SR4:    AND     1FH             ;STRIP FLAGS FROM ENTRY
+        ADD     A,E
+        LD      E,A
+        PUSH    BC              ;SAVE
+        LD      A,B             ;PRINT REG NAME
+        CALL    PCHR
+        CP      'H'+CASE
+        LD      A,'L'+CASE
+        CALL    Z,PCHR
+        XOR     71H;  'L'+CASE XOR '=';CLEAR CY, A = '='.
+        BIT     0,C             ;PRIME?
+        JR      Z,SR5
+        LD      A,''''
+SR5:    CALL    PCHR
+        LD      B,(HL)          ;SAVE ORIGINAL ENTRY
+        PUSH    IX
+        POP     HL              ;STACK FRAME
+        SBC     HL,DE           ;HL -> USER REG
+        CALL    GSUBV           ;PRINT VALUE, REGUEST NEW
+        LD      A,B             ;SAVE
+        POP     BC
+        RET     Z               ;DONE IF CR
+;
+SR6:    INC     B               ;NEXT REG
+        RLCA                    ;Y OR H?
+        JR      NC,SR3          ;IF NEITHER, LOOP
+        RLCA                    ;YES, IS IT Y?
+SUBR3:  CALL CRLF               ;ENTRY FOR DISPLAYING PC
+        JR      C,SR8
+        LD      B,'A'+CASE      ;YES, IT IS Y.
+        INC     C               ;TURN ON PRIME-FLAG
+        JR      SR3
+SR8:    BIT     0,C             ;NO. H OR H'?
+        JR      Z,SR3           ;IF H, LOOP.
+        RET                     ;IT IS H'. DONE.
+;
+; ENTER HL POINTING TO MEMORY &
+; B CONTAINING THE 1-BYTE OR 2-BYTE FLAG.
+; PRINTS SPACE, CONTENTS OF (HL), & ALSO (HL-1) FOR
+; 2-BYTE REGS, GETS SUBSTITUTION VALUE & LOADS IT.
+; RETURNS WITH Z-FLAG SET IFF THE DELIMITER IS
+; A CARRIAGE-RETURN.
+; PRESERVES BC & HL.
+;
+GSUBV:  CALL    PNM             ;PRINT (HL)
+        BIT     B2F,B           ;2-BYTE REG?
+        JR      Z,GS1
+        DEC     HL
+        CALL    PNM             ;LO BYTE
+GS1:    LD      A,C             ;SUBST-OR-DISPLAY FLAG
+        RLCA
+        JR      C,GS2           ;IF DISPLAY, EXIT.
+        LD      A,'.'
+        CALL    PCHR
+        CALL    GCHR
+        CP      '.'+1           ;SUBSTITUTION?
+GS2:    CALL    C,PCHR          ;IF NOT, PRINT ANOTHER.
+        JR      C,GS3
+        EX      DE,HL
+        CALL    GNHL            ;NEW VALUE
+        EX      DE,HL
+        LD      (HL),E
+        BIT     B2F,B
+        JR      Z,GS3
+        INC     HL
+        LD      (HL),D
+GS3:    CP      CR
+        CALL    NZ,SPACE
+        RET
+;
+LFNN:   DEFB    LF
+        DEFB    0
+        DEFB    80H
+;
+PRMPT:  DEFB    ':'
+        DEFB    00H
+; THE COMMAND TBL MUST IMMEDIATELY FOLLOW
+; THE PROMPT MESSAGE
+        DEFW    DISPL           ;DISPLAY: DM, DR
+        DEFW    ERROR           ;E
+        DEFW    FILL            ;FILL MEM WITH CONSTANT
+        DEFW    GO              ;GO; GO/WITH BREAKPOINT
+        DEFW    ERROR           ;H
+        DEFW    ERROR           ;INPUT FROM PORT #
+        DEFW    ERROR           ;J
+        DEFW    ERROR           ;K
+        DEFW    ERROR           ;L
+        DEFW    MOVE            ;MOVE A BLOCK OF MEMORY
+        DEFW    ERROR           ;NULLS
+        DEFW    ERROR           ;OUTPUT
+        DEFW    ERROR           ;PROGRAM
+        DEFW    ERROR           ;Q
+        DEFW    ERROR           ;READ BINARY OR ASCII
+        DEFW    SUBST           ;SUBSTITUTE: SM, SA, SB
+        DEFW    ERROR           ;UART: UA, UB
+        DEFW    VERIF           ;VERIFY BLOCKS OF MEMORY
+        DEFW    ERROR           ;WRITE BINARY OR ASCII
+;
+;
+RGTBL:  DEFB    43H             ;  -DUAF OR PM     ;A
+        DEFB    45H             ;  -DUBC OR PM     ;B
+        DEFB    46H             ;  -DUBC+1 OR PM   ;C
+        DEFB    47H             ;  -DUDE OR PM     ;D
+        DEFB    48H             ;  -DUDE+1 OR PM   ;E
+        DEFB    44H             ;  -DUAF+1 OR PM   ;F
+        DEFB      0
+        DEFB    0E9H            ;  -DUHL OR PM OR B2M OR CRM ;H [HL]
+        DEFB    11H             ;  -DUIN OR B1M    ;I
+        DEFB      0
+        DEFB      0
+        DEFB      0
+        DEFB      0
+        DEFB    12H             ;  -DUIN+1 OR B1M  ;N [INTERRUPT FF]
+        DEFB      0
+        DEFB    21H             ;  -DUPC OR B2M    ;PC
+        DEFB      0
+        DEFB      0
+        DEFB    2BH             ;  -DUSP OR B2M    ;SP
+        DEFB      0
+        DEFB      0
+        DEFB      0
+        DEFB      0
+        DEFB    2DH             ;  -DUIX OR B2M    ;X [IX]
+        DEFB    0AFH            ;  -DUIY OR B2M OR CRM ;Y [IY]
+;
+HEAD:   DEFB    CR
+        DEFB    LF
+        DEFB    'UCSD HARDWARE DESIGN MONITOR'
+        DEFB    0CFH            ;'O' .OR. 80H END OF STRING
+;
+;       SINGLE DENSITY BOOT FOR WD279X-02 FLOPPY CONTROLLER
+;
+BOOT:   LD      HL,80H
+        LD      (0),HL
+        LD      A,FORCE
+        OUT     FDCMMD,A        ;FORCE INT COMMAND
+        LD      C,FDSTAT        ;STAT CHAN TO C
+        CALL    BSYCHK          ;RETURNS WITH A=1
+        LD      A,FDREST
+        OUT     FDCMMD,A        ;SEND RESTORE COMMAND
+        CALL    BSYCHK
+        OUT     FDSECT,A        ;SET SECTOR ADDR
+        LD      HL,80H          ;SET DATA ADDR
+        LD      A,FDREAD
+        OUT     FDCMMD,A        ;SEND READ COMMAND
+        LD      B,80H           ;SET TO READ 128 BYTES
+        LD      C,FDDATA        ;SET C REG TO DATA REGISTER
+;
+GDATA   IN      A,FDSTAT        ;POLL BUSY BIT
+        BIT     1,A
+        JR      Z,GDATA
+        INI                     ;GET ONE BYTE
+        JR      NZ,GDATA
+        JP      80H
+;
+BSYCHK  EX      (SP),HL         ;DELAY
+        EX      (SP),HL
+        EX      (SP),HL
+        EX      (SP),HL
+        IN      A,(C)
+        RRCA                    ;SHIFT BIT 0 INTO CARRY
+        LD      A,1
+        RET     NC
+        JR      BSYCHK
+;**********************************************************
+;
+;
+;       VIDEO CONTROLLER SECTION  DATE: 8/11/85
+;
+;
+;**********************************************************
+;
+;****
+;INITIALIZE KEBOARD
+;****
+INTKYB:
+        LD      A,4FH           ;SET PIO PORT B FOR
+        OUT     (PIOCMB),A      ;INPUTS
+        RET
+;****
+KBHI:   IN      A,(KBIN)        ;INPUT CHAR
+        OUT     (LED),A
+        BIT     7,A
+        RET
+KBINPT: CALL    KBHI
+        JR      Z,KBINPT
+        AND     7FH
+        PUSH    AF
+KBLOW:  IN      A,(KBIN)
+        BIT     7,A
+        JP      NZ,KBLOW
+        POP     AF
+        RET
+;****
+;OUTPUTS ASCII CHARS TO VIDEO CONTROLLER
+;CRT9028
+;
+;INPUT: CHAR IN A REG AND SAVED IN C REG
+;****
+CRTOUT: PUSH    AF
+        PUSH    BC
+        PUSH    DE
+        PUSH    HL
+;DETECT/PROCESS CHAR
+;
+        LD      C,A             ;SAVE CHAR IN C
+        CP      ESC             ;ESC CHAR
+        JP      Z,ESCAPE        ;YES, JUMP SET FLAG
+;
+        LD      A,(ESCFL1)
+        CP      01H             ;ESC FLAG #1 SET?
+        JP      Z,EQUALS        ;YES, JUMP TO CHECK
+                                ;FOR "="
+;
+        LD      A,(ESCFL2)
+        CP      01H             ;ESC FLAG #2 SET?
+        JP      Z,ROWVAL        ;YES, JUMP TO CHECK
+                                ;ESC ROW VALUE
+;
+        LD      A,(ESCFL3)
+        CP      01H             ;ESC FLAG #3 SET?
+        JP      Z,COLVAL        ;YES, JUMP TO CHECK
+                               ;ESC COLUMN VALUE
+        LD      A,C            ;RESTORE CHAR
+        CP      CLRSRN          ;CLEAR SCREEN ?
+        JP      Z,CLEARS
+        CP      CR              ;CARRIAGE RETURN ?
+        JP      Z,CARRET
+        CP      LF              ;LINE FEED ?
+        JP      Z,LINEFD
+        LD      C,A             ;SAVE CHAR
+        CALL    CHROUT          ;DISPLAY ALL OTHER
+                                ;CHARS
+        JR      POPR
+HOMEC:  CALL    HMCUR           ;HOME THE CURSOR
+        JR      POPR
+CLEARS: CALL    INTCRT          ;CLEARS THE SCREEN
+        JR      POPR            ;AND HOMES THE CURSOR
+                                ;SAME AS INITIALIZE
+                                ;THE CRT CONTROLLER
+CARRET: CALL    CRRET
+        JR      POPR
+LINEFD: CALL    LFEED
+        JR      POPR
+SCROLL: CALL    SCRLUP          ;SCROLL SCREEN UP
+POPR:   POP     HL
+        POP     DE
+        POP     BC
+        POP     AF
+        RET
+;****
+;ESCAPE SEQUENCE PROCESSING
+;****
+ESCAPE: LD      A,01H           ;SET ESC FLAG #1
+        LD      (ESCFL1),A
+        LD      A,00H           ;RESET ESC FLAGS
+        LD      (ESCFL2),A
+        LD      (ESCFL3),A
+        JP      POPR
+;
+EQUALS: LD      A,C             ;RESTORE CHAR
+        CP      3DH             ;CHAR= "="
+        JR      NZ,NEQUAL       ;NO, JUMP**
+        LD      A,01H          ;YES, SET FLAG #2
+        LD      (ESCFL2),A
+NEQUAL: LD      A,00H          ;*RESET FLAG #1
+        LD      (ESCFL1),A
+        JP      POPR
+;
+ROWVAL: LD      A,C           ;RESTORE CHAR
+        CP      20H             ;CHAR >=20H?
+        JR      NC,OKROW        ;YES, CHECK FURTHER
+                                ;JUMP**
+        JR      NOKROW          ;NO, EXIT; JUMP**
+OKROW:  SUB     20H             ;YES, SUBTRACT BIAS
+        LD      (CHRROW),A    ;SAVE ESC ROW VALUE
+        LD      A,01H         ;SET ESC FLAG #3
+        LD      (ESCFL3),A
+NOKROW: LD      A,00H         ;***RESET ESC FLAG #2
+        LD      (ESCFL2),A
+        JP      POPR
+;
+COLVAL: LD      A,C           ;RESTORE CHAR
+        CP      20H           ;CHAR>=20H?
+        JR      NC,OKCOL      ;YES, CHECK FURTHER
+        JR      NOKCOL        ;NO, EXIT; JUMP**
+OKCOL:  SUB     20H            ;YES SUBTRACT BIAS
+        CALL    CURESC         ;SET CURSOR ADDRESS
+NOKCOL: LD      A,00H         ;**RESET ESC FLAG #3
+        LD      (ESCFL3),A
+        JP      POPR
+;
+CURESC: LD      HL,00H       ;HL=0, DE=CHAR/ROW
+        LD      C,A          ;C=COLUMN VALUE
+        LD      A,(CHRROW)   ;B=(ROW VALUE)-1
+        CP      00H          ;(ROW VALUE)-1=?
+        JR      Z,NADD80     ;1ST ROW, ADD 80
+                             ;NOT REQUIRED
+        LD      B,A
+ADD80:  LD      DE,50H       ;GET CURSOR ADDRESS
+        ADD     HL,DE        ;RELATIVE TO TOSAD
+        DJNZ    ADD80
+NADD80: LD      B,00H
+        ADD     HL,BC        ;HL=CURSOR ADDRESS
+                                ;RELATIVE TO TOSAD
+        EX      DE,HL        ;DE=CURSOR ADDRESS
+                                ;RELATIVE TO TOSAD
+        CALL    HMCUR        ;HL=TOSAD
+        ADD     HL,DE        ;HL=CURSOR ADDRESS
+        LD      DE,780H      ;CURSOR<780H?
+        XOR     A
+        PUSH    HL
+        SBC     HL,DE
+        JR      C,LTH780     ;YES
+        POP     BC
+        JR      GTE780       ;NO
+LTH780: POP     HL
+GTE780: CALL    CRSRAD       ;UPDATE CURSOR TO HL
+        RET
+;
+;TOSAD, (MTOSAD), TO HL
+;
+HMCUR:  LD      A,(MTOSAD)   ;CURSOR HOME ADDR IN HL
+        SLA     A            ;SHIFT TOP OF SCREEN
+        SLA     A            ;ADDRESS LEFT FOR CURLO
+        SLA     A
+        SLA     A
+        LD      L,A
+        LD      A,(MTOSAD)   ;SHIFT RIGHT AND
+        SRL     A            ;MASKOFF 50/60 HZ BIT
+        SRL     A
+        SRL     A
+        SRL     A
+        AND     07H
+        LD      H,A
+        RET
+;*****
+;INITIALIZE CRT9028
+;*****
+INTCRT: LD      A,RESET         ;RESET CHIP
+        OUT     (ADR),A
+        LD      A,00H           ;LOAD DUMMY CHAR
+        OUT     (DATA),A        ;ACTIVATE RESET
+        LD      (ESCFL1),A      ;CLEAR ESC FLAGS
+        LD      (ESCFL2),A
+        LD      (ESCFL3),A
+        LD      (CHRROW),A      ;CLEAR CHRROW
+;
+;SCREEN STARTS AT 00H
+;
+        LD      A,TOSADD        ;SET TOSADDR REG
+        OUT     (ADR),A
+        LD      A,80H           ;60 HZ, REFRESH
+        OUT     (DATA),A
+        LD      (MTOSAD),A      ;SAVE IN MEMORY
+        LD      A,ATTDAT        ;SET ATTDAT REG FOR
+        OUT     (ADR),A        ;BLOCK CURSOR. SEE
+        LD      A,00H           ;SPEC SHEET FOR OTHER
+        OUT     (DATA),A        ;ATTRIBUTES
+        LD      A,MODE          ;SET MODE ADDR
+        OUT     (ADR),A         ;FOR
+        LD      A,80H           ;AUTO INCREMENT
+        OUT     (DATA),A
+;-------
+;INITIALIZE 25TH STATUS LINE AND CLEAR SCREEN
+;-------
+        CALL    INT25L          ;INITIALIZE 25TH LINE
+        LD      HL,0000H        ;SET CURSOR TO START
+        CALL    CRSRAD          ;OF LINE 0000H
+        LD      A,FILADD        ;SET FILADDR REG TO
+        OUT     (ADR),A
+        LD      A,78H           ;END OF SCREEN ADDR,
+        OUT     (DATA),A        ;START OF 25TH LINE
+        LD      A,CHAR
+        OUT     (ADR),A
+        LD      A,BLANK         ;WAIT FOR CONTROLLER
+        CALL    CBUSY           ;TO FILL WITH BLANKS
+        OUT     (DATA),A
+        CALL    CBUSY           ;WAIT FOR FILL TO FINIS
+        RET
+;
+;INITIALIZE 25TH STATUS LINE
+;
+INT25L: LD      HL,0780H        ;SEND SIGN ON "STATUS"
+        LD      B,74            ;TO BEGINNING OF 25TH
+        LD      DE,TABLE        ;STATUS LINE WITH
+LOOP:   LD      A,(DE)
+        CP      '$'
+        JR      Z,SBLANK
+        OR      80H             ;GRAPHICS ATTRIBUTE
+        PUSH    AF              ;SET
+        CALL    CRSRAD
+        LD      A,CHAR
+        OUT     (ADR),A
+        POP     AF
+        CALL    CBUSY
+        OUT     (DATA),A
+        INC     DE
+        INC     HL
+        JR      LOOP
+SBLANK: CALL    CRSRAD         ;SEND BLANKS TO
+        LD      A,CHAR          ;REMAINING 74 BYTES
+        OUT     (ADR),A         ;OF 25TH LINE
+        LD      A,BLANK
+        CALL    CBUSY
+        OUT     (DATA),A
+        INC     HL
+        DJNZ    SBLANK
+        RET
+;-------
+; OUTPUT CHAR TO CRT9028 VIDEO CONTROLLER
+;-------
+CHROUT: LD      A,CHAR          ;SETUP TO OUTPUT CHAR
+        OUT     (ADR),A         ;RESTORE CHAR
+        LD      A,C             ;CRT 9028 BUSY?
+        CALL    CBUSY           ;OUTPUT CHAR
+        OUT     (DATA),A
+;
+;FORWARD SPACE, INCREMENT CURSOR
+;
+FPSACE: CALL    LN24HI          ;HL=24HI
+        LD      DE,(MCURLO)     ;DE=CURADDR
+        INC     DE              ;INCREMENT CURSOR
+        OR      A               ;CLEAR CARRY
+        SBC     HL,DE           ;HL=(24HI-CURADDR)
+        JR      Z,SCRLCR        ;CURSOR=24HI?
+                                ;YES, JUMP*
+        EX      DE,HL           ;NO, HL=CURADDR
+        LD      A,07H           ;CHECK FOR SCREEN
+        CP      H               ;CHECK FOR WRAP AROUND
+        JR      NZ,CONT1        ;CURADDR=780H?
+                                ;NO, JUMP**
+        LD      A,80H
+        CP      L
+        JR      NZ,CONT1        ;NO, JUMP**
+        LD      HL,0000H        ;YES, SET
+                                ;CURADDR, HL=0000H
+        JR      CONT1           ;JUMP**
+SCRLCR: CALL    CRRET           ;CARRIAGE RETURN
+        CALL    SCRLLF          ;SCROLL & LINEFEED
+CONT1:  CALL    CRSRAD          ;**UPDATE CURSOR
+        RET
+;-------
+; SUBROUTINE LN24HI YIELDS HL=24HI,
+; HIGH ADDRESS OF 24TH LINE
+;-------
+LN24HI: CALL    HMCUR           ;TOSADDR=HL
+        LD      A,H             ;TOSADDR, HL=0000H?
+        OR      L
+        CP      00H
+        JR      Z,HLZERO        ;YES, JUMP*
+        LD      DE,0001H        ;NO
+        OR      A               ;CLEAR CARRY
+        SBC     HL,DE           ;HL=24HI=TOSADDR-A
+        JR      HLNOZ
+HLZERO: LD      HL,077FH        ;*SET HL=24HI=77FH
+HLNOZ:  RET
+;****
+; CARRIAGE RETURN
+;****
+CRRET: LD      HL,(MCURLO)     ;HL=CURADDR
+        PUSH    HL              ;SAVE CURADDR
+        LD      DE,0050H        ;NO. CHARS PER ROW
+MOD80:  OR      A               ;CLEAR CARRY
+        SBC     HL,DE           ;SUCCESSIVE SUB UNTIL
+        ;HL<50H
+        JP      M,FSTROW        ;JUMP* IF CURSOR IN
+        ;000H ROW
+        LD      A,00H           ;CURADDR,HL<50H?
+        CP      H
+        JR      NZ,MOD80        ;NO, SUB AGAIN
+        LD      A,L
+        CP      50H
+        JR      NC,MOD80        ;NO, SUB AGAIN
+        LD      E,L             ;DE=(CURADDR)MOD80
+        POP     HL              ;RESTORE CURADDR
+        OR      A
+        SBC     HL,DE           ;HL=START ADDR OF
+        ;CURRENT LINE
+        JR      CONTCR
+FSTROW: POP     HL              ;*BALANCE STACK
+        LD      HL,0000H        ;SET CURADDR,HL=0000H
+CONTCR: CALL    CRSRAD          ;UPDATE CURSOR
+                                ;REG/MEMORY
+        RET
+;****
+;LINE FEED:
+;  24TH ROW: HIGH ADDR=24HI, LOW ADDR=24LO
+;  24HI=TOSADDR-1 EXCEPT FOR BOUNDARY
+;  CONDITION, TOSADDR=0000H, THEN 24HI=77FH
+;  SUBROUTINE LN24HI YIELDS HL=24HI
+;****
+LFEED:  CALL    LN24HI          ;HL=24HI
+        LD      DE,(MCURLO)     ;DE=CURADDR
+        PUSH    HL              ;SAVE 24HI
+        OR      A
+        SBC     HL,DE           ;HL=(24HI-CURADDR)
+        JR      C,LFEED1        ;CURADDR=<24HI?
+        ;NO,JUMP**
+        LD      DE,4FH          ;YES
+        ;DE=(LINE LENGTH)-1
+        POP     HL              ;RESTORE 24HI=HL
+        OR A
+        SBC     HL,DE           ;24LO=(24HI-4FH)=HL
+        EX      DE,HL           ;DE=24LO
+        LD      HL,(MCURLO)     ;HL=CURADDR
+        OR      A
+        SBC     HL,DE           ;HL=(CURADDR-24LO)
+        JR      C,LFEED2        ;CURADDR<24LO?
+        ;YES, JUMP(*)
+;-------
+; SCROLL REQUIRED BY LINE FEED
+;-------
+SCRLLF:  CALL    SCRLUP          ;NO, SCROLL UP
+        JR      LFEED2
+LFEED1: POP     HL              ;**BALANCE STACK
+LFEED2: LD      HL,(MCURLO)     ;(*)HL=CURADDR
+        LD      DE,0050H        ;MOVE CURSOR DOWN
+        ADD     HL,DE           ;ONE LINE
+        LD      A,07H           ;CURADDR,HL<780H?
+        CP      H
+        JR      NZ,NOCRS        ;YES,JUMP(**)
+        LD      A,L
+        CP      80H
+        JR      C,NOCRS         ;YES,JUMP(**)
+        LD      DE,0780H        ;NO, SUB 780H TO SET
+        ;CURSOR TO LINE 0000H
+        OR      A
+        SBC     HL,DE
+NOCRS:  CALL    CRSRAD          ;(**)UPDATE CURSOR
+        RET                     ;REG/MEMORY
+;-------
+; SCROLL-UP
+;-------
+SCRLUP: LD      DE,(MCURLO)     ;SAVE CURADDR
+        CALL    HOME            ;HOME CURSOR
+        ;CURADDR=TOSADDR
+        LD      A,FILADD       ;SET FILADDR REG
+        OUT     (ADR),A         ;TO START OF SECOND
+        LD      A,(MTOSAD)      ;LINE
+        ADD     A,05H
+        OUT     (DATA),A
+        LD      A,CHAR
+        OUT     (ADR),A
+        LD      A,BLANK         ;FILL TOP LINE WITH
+        CALL    CBUSY           ;BLANKS
+        OUT     (DATA),A
+        CALL    CBUSY           ;WAIT FOR FILL
+        EX      DE,HL           ;RESTORE CURADDR=HL
+        CALL    CRSRAD          ;UPDATE CURSOR
+                                ;REG/MEMORY
+        LD      A,(MTOSAD)      ;GET TOSADDR
+        AND     7FH             ;MASKOFF 60/50 HZ BIT
+        CP      73H             ;BOUNDARY:
+        ;TOSADDR=7380H?
+        JR      Z,ZEROL         ;YES, JUMP*
+        ADD     A,05H           ;NO, GO UP 1 LINE
+        JR      OTHERL
+ZEROL:  LD      A,00H           ;*SET TOSADDR=0000H
+OTHERL: CALL    TOSAD           ;UPDATE TOSADDR REG
+        RET
+HOME:   CALL    HMCUR           ;TOSADDR=HL
+        CALL    CRSRAD          ;UPDATE CURSOR
+        RET                     ;REG/MEMORY
+;-------
+; CHANGE TOP OF SCREEN ADDR, TOSADDR
+; ENTRY: REG A
+;-------
+TOSAD:  OR      80H             ;ENABLE 60 HZ REFRESH
+        PUSH    AF              ;RATE
+        LD      A,TOSADD        ;SELECT TOSADDR REG
+        OUT     (ADR),A
+        POP     AF
+        OUT     (DATA),A        ;UPDATE TOSADDR REG
+        LD      (MTOSAD),A      ;UPDATE MEMORY
+        RET
+;-------
+; UPDATE CURSOR/MEMORY STORAGE TO CONTENTS
+; OF REG HL
+;-------
+CRSRAD: LD      (MCURLO),HL     ;SAVE CURADDR IN
+                                ;MEMORY
+        LD      A,CURLO         ;UPDATE CURLO REG
+        OUT     (ADR),A
+        LD      A,L
+        CALL    CBUSY
+        OUT     (DATA),A
+        LD      A,CURHI         ;UPDATE CURHI REG
+        OUT     (ADR),A
+        LD      A,H
+        OR      80H             ;SET 25TH LINE ENABLE
+        ;SLE=1
+        CALL    CBUSY
+        OUT     (DATA),A
+        RET
+SHOW:   LD      A,(MCURLO)
+        OUT     (00H),A
+DELAY:  PUSH    HL
+        PUSH    BC
+        PUSH    DE
+        PUSH    AF
+        LD      A,200
+        LD      B,A
+        LD      DE,-1
+LP1:    LD      HL,500
+LP2     ADD     HL,DE
+        JR      C,LP2
+        DJNZ    LP1
+        POP     AF
+        POP     DE
+        POP     BC
+        POP     HL
+        RET
+;-------
+; CRT CONTROLLER BUSY
+;-------
+CBUSY:  PUSH    AF              ;WAIT FOR CONTROLLER
+CBSY:   IN      A,(ADR)
+        BIT     7,A
+        JR      Z,CBSY
+        POP     AF
+        RET
+TABLE:  DB      'STATUS$'
+        END

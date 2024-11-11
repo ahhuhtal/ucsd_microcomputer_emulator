@@ -1,0 +1,75 @@
+;                                           CB.Z80 10/12/85
+;                         typed in from hardcopy 8 Nov 2024
+;       SINGLE DENSITY BOOT FOR WD279X-02 FLOPPY CONTROLLER
+
+MEMSIZ  EQU     62              ;SIZE OF THIS CPM
+EXBYTE  EQU     64-MEMSIZ       ;EXTRA K OF RAM NEEDED FOR BIOS
+CPM     EQU     0FA00H-1600H-EXBYTE*1024 ;WHERE CPM STARTS IN MEM
+cbios   equ     cpm+1600h       ;bios entry point
+;
+FDSTAT  EQU     48H             ;STATUS CHAN
+FDCMMD  EQU     48H             ;COMMAND CHAN
+FDSTEP  EQU     5FH             ;STEP IN ONE TRACK
+FDTRK   EQU     49H             ;TRACK REG
+FDSECT  EQU     4AH             ;SECTOR REG
+FDDATA  EQU     4BH             ;DATA REG
+FDREST  EQU     0FH             ;RESTORE (VERIFY, HEAD LOAD,15MS)
+FDREAD  EQU     88H             ;READ COMMAND
+FORCE   EQU     0D0H            ;FORCE INTERRUPT COMMAND
+;
+        ORG     0080H
+;
+CBOOT   LD      HL,CPM
+        LD      (0),HL
+        LD      A,FORCE
+        OUT     FDCMMD,A        ;FORCE INT COMMAND
+        CALL    BSYCHK
+        LD      A,FDREST        ;LOAD RESTORE COMMAND
+        OUT     FDCMMD,A        ;SEND RESTORE CMMD
+        CALL    BSYCHK          ;WAIT FOR TRACK 0
+        LD      A,2
+        LD      (SECTOR),A      ;START AT SECTOR 2
+        LD      B,25            ;READ 25 SECTORS
+CBOOT2  CALL    RDSECT          ;READ ONE SECTOR
+        DJNZ    CBOOT2
+        CALL    BSYCHK
+        LD      A,FDSTEP        ;STEP TO TRACK 1
+        OUT     FDCMMD,A
+        CALL    BSYCHK
+        LD      A,1             ;RESET SECTOR ADDR
+        LD      (SECTOR),A
+        LD      B,26            ;READ 26 SECTORS
+CBOOT3  CALL    RDSECT
+        DJNZ    CBOOT3          ;CONT FOR TRACK 1
+        JP      cbios           ;JUMP TO CCP
+;
+RDSECT  PUSH    BC
+        LD      B,128           ;READ 128 BYTES
+        LD      C,FDDATA        ;DATA REG TO C
+        LD      A,(SECTOR)
+        OUT     FDSECT,A        ;SET SECTOR ADDR
+        INC     A
+        LD      (SECTOR),A      ;BUMP SECTOR ADDR
+        CALL    BSYCHK
+        LD      A,FDREAD
+        OUT     FDCMMD,A        ;SET READ COMMAND
+LDATA   IN      A,FDSTAT
+        BIT     1,A             ;WAIT FOR DATA READY
+        JR      Z,LDATA
+        INI                     ;INPUT AND STORE DATA VIA HL
+        JR      NZ,LDATA        ;CONT FOR 128 BYTES
+        POP     BC
+        RET
+;
+BSYCHK  EX      (SP),HL
+        EX      (SP),HL
+        EX      (SP),HL
+        EX      (SP),HL
+        IN      A,FDSTAT
+        RRCA                    ;SHIFT BIT 0 INTO CARRY
+        LD      A,1
+        RET     NC
+        JR      BSYCHK
+;
+SECTOR  DB      0
+        END

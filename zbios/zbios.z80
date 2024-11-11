@@ -1,0 +1,466 @@
+;                                                               ZBIOS.Z80
+;                                                                10/12/85
+;                                          typed from hardcopy 9 Nov 2024
+;************************************************************************
+; THIS IS A CPM BIOS DESIGNED FOR CHRIS POULOS FOR USE ON A SINGLE-BOARD
+; Z-80 SYSTEM.  THERE IS NO ATTEMPT TO MAKE THIS AN ALL-PURPOSE BIOS FOR
+; VARIABLE SIZE MEMORY SYSTEMS.  THIS BIOS IS DESIGNED ONLY FOR A 64K
+; CPM SYSTEM AND MAKES MOST OF ITS I/O CALLS TO THE SYSTEM EPROM LOCATED
+; AT F800H.
+;
+;                                       RON BRUCK SEPT 1984
+; MODIFIED 9/14/95 FOR PRINTER OUTPUT !!!!!! INT TABLE MUST BE ON EVEN
+; BOUNDARY !!!!!!
+;***********************************************************************
+        ORG     0F200H          ;64K BIOS LOCATION
+;
+MEMSIZ  EQU     62              ;THE SIZE OF THIS CPM SYSTEM
+CPM     EQU     0FA00H-1600H-(64-MEMSIZ)*1024
+CCP     EQU     CPM             ;START OF CPM CCP
+BDOS    EQU     CPM+806H        ;ENTRY POINT INTO BDOS
+BIOS    EQU     CPM+1600H       ;START OF BIOS IN 62K SYSTEM
+BUFF    EQU     080H            ;DEFAULT DMA ADDR
+;
+;       LINKAGES IN SYSTEM EPROM
+;
+CRTOUT  EQU     0F803H          ;CHAR OUT ROUTINE
+KBINPT  EQU     0F806H          ;KEYBOARD HANDLER
+KBHI    EQU     0F809H          ;KEYBOARD STATUS ROUTINE
+PMSG    EQU     0F80CH          ;PRINT MESSAGE ROUTINE
+;
+;       MISC EQUATES
+;
+ALOCSZ  EQU     31              ;ALLOCATION VECTOR SIZE
+DRVSIZ  EQU     10H             ;8 INCH DRIVES
+TRYS    EQU     10              ;NO READ/WRITE TRYS BEFORE ERROR EXIT
+;
+;       FLOPPY DISK EQUATES
+;
+FDSTAT  EQU     48H             ;STATUS CHAN
+FDCMMD  EQU     48H             ;COMMAND CHAN
+FDTRK   EQU     49H             ;TRACK REG
+FDSECT  EQU     4AH             ;SECTOR REG
+FDDATA  EQU     4BH             ;DATA REG
+FDREST  EQU     0FH             ;RESTORE (VERIFY,HEAD LOAD,6MS)
+FDREAD  EQU     88H             ;READ COMMAND
+FDWRIT  EQU     0A8H            ;SECTOR WRITE COMMAND
+FDSEEK  EQU     1FH             ;SEEK WITH HEADLOAD AND VERIFY
+FORCE   EQU     0D0H            ;FORCE INTERRUPT COMMAND
+RDMSK   EQU     00011100B       ;READ STATUS ERROR MASK
+WRTMSK  EQU     01011100B       ;WRITE STATUS ERROR MASK
+MTRGO   EQU     20H             ;MOTOR OF BIT
+EBIT    EQU     2               ;ERROR FLAG BIT POSITION
+WRTBIT  EQU     5
+VERIFY  EQU     4
+LODHD   EQU     8               ;HEAD LOAD FLAG
+HDLOD   EQU     5               ;HEAD LOAD STATUS BIT
+RECNFD  EQU     4               ;RECORD NOT FOUND STATUS BIT
+LATCH   EQU     1               ;??????
+;
+;* STANDARD CPM BIOS ENTRY VECTORS
+;
+ZBIOS   JP      BOOT            ;COLD START
+WBOTE   JP      WBOOT           ;WARM BOOT
+        JP      CONST           ;CONSOLE STATUS
+        JP      CONIN           ;CONSOLE CHAR INPUT
+        JP      CONOUT          ;CONSOLE CHAR OUT
+        JP      LIST            ;LIST CHAR OUT
+        JP      PUNCH           ;PUNCH OR AUX CHAR OUT
+        JP      READER          ;AUX CHAR IN
+        JP      HOME            ;RESTORE TO TRACK 0
+        JP      SELDSK          ;SELECT DISK
+        JP      SETTRK          ;SET TRACK
+        JP      SETSEC          ;SET SECTOR
+        JP      SETDMA          ;SET DMA ADDR
+        JP      READ            ;READ DISK SECTOR
+        JP      WRITE           ;WRITE DISK SECTOR
+        JP      LISTST          ;RETURN LIST DEVICE STATUS
+        JP      STRAN           ;SECTOR TRANSLATION
+;
+;**************************************************************************
+;       SYSTEM WARM BOOT
+;**************************************************************************
+;
+WBOOT:  LD      SP,BUFF         ;SET STACK POINTER TO 0080H
+        LD      C,0             ;BOOT FROM DRIVE A
+        CALL    SELDSK
+        CALL    HOME            ;RESTORE COMMAND
+        LD      DE,200H         ;LOAD TRACK 0 SECTOR 2
+        LD      HL,CCP          ;ADDR OF CPM
+WB0:    LD      C,D             ;RELOAD SECTOR ADDR
+        CALL    SETSEC          ;SET SECTOR ADDR
+        LD      (DMAADR),HL     ;SET DMA ADDR
+        PUSH    DE              ;SAVE TRACK AND SECTOR ADDR
+        CALL    READ            ;READ A SECTOR
+        POP     DE
+        OR      A               ;SET FLAGS
+        JR      NZ,WBOOT        ;RETRY ON ERROR
+        LD      A,H
+        CP      BIOS/256        ;STOP BEFORE RELOAD OF BIOS
+        JP      NC,GOCPM        ;DONE - GO INIT SYSTEM
+        INC     D               ;BUMP ZECTOR ADDR
+        LD      A,D
+        CP      27              ;DONE WHEN SECTOR ADDR=27
+        JR      C,WB0           ;STILL ON TRACK 0
+        LD      D,1             ;ELSE RESET SECTOR TO 1 AND TRACK TO 1
+        INC     E
+        LD      C,E
+        CALL    SETTRK          ;BUMP TRACK TO TRACK 1
+        JR      WB0
+;
+BSYCHK  EX      (SP),HL         ;DELAY
+        EX      (SP),HL
+        EX      (SP),HL
+        EX      (SP),HL
+        IN      A,FDSTAT
+        RRCA                    ;SHIFT BIT 0 INTO CARRY
+        LD      A,1
+        RET NC
+        JR BSYCHK
+;
+;**************************************************************************
+;       SYSTEM COLD BOOT INITIALIZATION
+;**************************************************************************
+;
+BOOT:   LD      HL,CPMMSG
+        CALL    PMSG            ;PRINT SIGN-ON MSG
+        XOR     A
+        LD      (4),A           ;COME UP ON DRIVE 0
+        LD      A,81H           ;INIT IO BYTE FOR STD CONFIG
+        LD      (3),A
+;
+GOCPM   LD      A,0C3H          ;SET UP JUMP INSTR AT 0 AND 5
+        LD      (0),A
+        LD      (5),A
+        LD      HL,WBOTE        ;SET UP WARM BOOT ADDR IN 0001
+        LD      (1),HL
+        LD      HL,BDOS         ;SET UP BDOS JUMP AT 006
+        LD      (6),HL
+        LD      HL,80H          ;SET DEFAULT DMA ADDR
+        LD      (DMAADR),HL
+        LD      A,(4)           ;LOAD CURRENT DEFAULT DRIVE #
+        LD      C,A
+        JP      CCP             ;ENTER OPERATION SYSTEM
+;
+;****************************************************************************
+;       SET SECTOR ADDRESS - ON ENTRY "C" = SECTOR ADDR - REG "A" IS ALTERED
+;****************************************************************************
+;
+SETSEC: CALL    BSYCHK          ;DONT DO WHILE CONTROLLER IS BUSY
+        LD      A,C
+        LD      (SECTOR),A      ;SAVE SECTOR ADDR
+SEC1:   OUT     FDSECT,A        ;ADDR TO SECTOR REGISTER
+        RET
+;
+GETST   IN      A,FDSTAT        ;GET DRIVE CONTROLLER STATUS
+        OR      A               ;SET FLAGS
+        RET
+;
+;****************************************************************************
+;       SET DMA ADDRESS - ON ENTRY BC= DMA ADDR
+;****************************************************************************
+;
+SETDMA: LD      (DMAADR),BC     ;SAVE DMA ADDRESS
+        RET
+;
+HOME:   LD      C,0             ;SET TRACK ADDR TO 0 THEN SETTRK
+;
+;****************************************************************************
+;       SET TRACK ADDRESS - ON ENTRY REG "C"= TRACK ADDRESS
+;****************************************************************************
+;
+SETTRK: LD      A,C
+        LD      (REQTRK),A      ;SAVE TRACK ADDRESS
+        RET
+;
+;****************************************************************************
+;       SELECT DISK DRIVE AS GIVEN IN 'C'
+;       HL POINTS TO DISK PARAM HEADER IF O.K. ELSE HL=0
+;****************************************************************************
+;
+SELDSK: LD      A,C
+        LD      HL,0            ;HL WILL=0 IF DRIVE OUT OF RANGE
+        CP      2               ;1 IS MAX DRIVE #
+        RET     NC              ;ERROR EXIT
+        LD      (REQDSK),A
+        LD      L,C
+        LD      H,0             ;HL=DRIVE #
+        ADD     HL,HL
+        ADD     HL,HL
+        ADD     HL,HL
+        ADD     HL,HL           ;HL=DRIVE #*16
+        LD      DE,DPBASE
+        ADD     HL,DE           ;HL^ TO DISK PARAM HEADER
+        RET
+;****************************************************************************
+;       TRANSLATE LOGICAL TO PHYSICAL SECTOR
+;       ON ENTRY, BC= LOGICAL SECTOR AND DE ^ TO SECTOR TRANSLATION TBL
+;       ON RETURN, HL= 16 BIT PHYSICAL SECTOR ADDRESS
+;       ALTERS A, HL, DE
+;****************************************************************************
+;
+STRAN:  EX      DE,HL
+        ADD     HL,BC           ;GET OFFSET INTO TABLE
+        LD      L,(HL)          ;SECTOR # TO HL
+        LD      H,0
+        RET
+;
+;****************************************************************************
+;       DISK SECTOR READ/WRITE ROUTINES
+;       ON RETURN, 'A'= 0 IF NO ERROR ELSE 'A'= 1
+;               'HL' = DMA ADDR + 128 IF NO ERROR
+;****************************************************************************
+READ:   LD      DE,FDREAD SHL 8 OR RDMSK
+        JR      RW0             ; COMMON READ/WRITE ROUTINE
+WRITE:  LD      DE,FDWRIT SHL 8 OR WRTMSK
+;
+RW0     LD      B,TRYS          ;B = RETURY COUNTER
+        CALL    SELECT          ;WAIT TILL NOT BUSY THEN SELECT
+RW1     CALL    MOVHD           ;SEEK TO DESIRED TRACK
+        LD      A,FORCE         ;LOAD FORCE INTO CMMD
+CMD4    OUT     FDCMMD,A        ;FORCE INTERRUPT COMMAND
+        PUSH    BC              ;SAVE RETRY COUNT
+        LD      HL,(DMAADR)     ;LOAD BUFFER ADDR
+        LD      C,FDDATA        ;LOAD 'C' WITH DATA PORT
+CKHD    CALL    GETST           ;GET DRIVE STATUS
+        BIT     HDLOD,A         ;TEST HEAD LOAD STATUS
+        LD      A,D             ;LOAD READ/WRITE COMMAND
+        LD      B,128           ;NO OF BYTES TO LOAD
+        JR      NZ,RW2          ;HEAD ALREADY LOADED
+        SET     EBIT,A          ;SET HEAD LOAD BIT IN COMMAND
+RW2     BIT     WRTBIT,A        ;IS COMMAND A WRITE?
+CMD5    OUT     FDCMMD,A
+        EX      (SP),HL         ;TIME DELAY
+        EX      (SP),HL
+        EX      (SP),HL
+        EX      (SP),HL
+        EX      (SP),HL
+        EX      (SP),HL
+        EX      (SP),HL
+        EX      (SP),HL
+        EX      (SP),HL
+        EX      (SP),HL
+        EX      (SP),HL
+        EX      (SP),HL
+;
+        JR      NZ,WRT
+;
+RD      IN      A,FDSTAT        ;POLL BUSY BIT
+        BIT     1,A
+        JR      Z,RD
+        INI                     ;READ DATA BYTE
+        JR      NZ,RD           ;READ ALL 128 BYTES
+        JR      RW3
+;
+WRT     IN      A,FDSTAT
+        BIT     1,A
+        JR      Z,WRT
+        OUTI                    ;WRITE DATA BYTE
+        JR      NZ,WRT
+RW3     POP     BC              ;RESTORE ERROR COUNT
+        IN      A,FDSTAT        ;READ ERROR STATUS
+        AND     E               ;CHECK AGAINST ERROR MASK
+        RET     Z               ;NO ERRORS - DONE
+        PUSH    AF
+        LD      A,7
+        CALL    CRTOUT          ;TYPE 'BELL'
+        POP     AF
+        DEC     B               ;COUNT DOWN ERRORS
+        JR      Z,ERRORS        ;TOO MANY ERRORS - ABORT
+        BIT     RECNFD,A        ;TEST FOR RECORD NOT FOUND ERROR
+        JR      Z,RW1           ;NO RETRY IMMEDIATELY
+        IN      A,FDTRK         ;LOAD CURRENT TRACK #
+        PUSH    AF              ;SAVE TRACK #
+        CALL    HOME            ;RECALIBRATE DRIVE
+        POP     AF
+        LD      C,A
+        CALL    SETTRK          ;RESEEK TO CURRENT TRACK
+        JR      RW1             ;NEXT TRY
+;
+ERRORS  LD      A,1             ;RETURN WITH A=1 ON ERROR
+        RET
+;
+;*****************************************************************************
+;       MOVE HEAD TO SELECTED TRACK - MOVES HEAD ON CURRENT SELECTED DRIVE
+;       TO MOST RECENTLY REQUESTED TRACK.  WAITS UNTIL CONTROLLER IS NOT
+;       BUSY THEN CHECKS TO SEE IF HEAD IS POSITIONED ON THE REQUESTED TRACK.
+;       IF SO, NO FURTHER ACTION, ELSE SEEK COMMAND TO CONTROLLER TO SEEK
+;       REQUESTED TRACK.  HEAD POSITION IS CHECKED AFTER COMPLETION OF SEEK.
+;*****************************************************************************
+;
+MOVHD:  CALL    BSYCHK          ;WAIT FOR CONTROLLER NOT BUSY
+        LD      HL,REQTRK       ;LOAD POINTER TO REQUESTED TRACK
+TK3     IN      A,FDTRK         ;READ CURRENT TRACK ADDR
+        CP      (HL)            ;SAME AS REQUESTED?
+        RET     Z               ;NO ACTION REQD
+        LD      A,(HL)          ;GET TRACK ADDR
+        OUT     FDDATA,A        ;OUTPUT TRACK ADDR IN DATA REG
+        LD      A,FDSEEK        ;LOAD SEEK COMMAND
+        OUT     FDCMMD,A        ;PERFORM SEEK
+        JR      MOVHD           ;RECHECK HEAD POSITION AFTER SEEK
+;
+;*****************************************************************************
+;       SELECT DISK ROUTINE - THIS ROUTINE IS USED TO PREVENT UNNECESSARY
+;       HEADLOADS WHEN CPM SELECTS A DRIVE WITHOUT PERFORMING ANY OPERATIONS
+;       ON THAT DRIVE.  IF THE REQUESTED DRIVE IS DIFFERENT FROM THE CURRENT
+;       DRIVE, THE ROUTINE WILL PERFORM A SEEK TO THE CURRENT TRACK FOR THE
+;       NEW DRIVE WITHOUT SETTING THE HEAD LOAD.
+;*****************************************************************************
+;
+SELECT  CALL    BSYCHK          ;WAIT FOR CONTROLLER NOT BUSY
+        LD      HL,(REQDSK)
+        LD      C,L             ;GET REQ DISK IN C
+        LD      A,H             ;GET CURRENT DISK IN A
+        CP      C               ;ARE THEY THE SAME?
+        PUSH    AF              ;SAVE RESULT
+        CALL    TRKADR
+        IN      A,FDTRK         ;GET CURRENT TRACK
+        LD      (HL),A          ;SAVE CURRENT TRACK ADDR
+        LD      A,C             ;A=REQ DRIVE NO.
+        LD      (CURDSK),A      ;REQ DISK NOW BECOMES CURRENT DRIVE
+        CALL    TRKADR
+        SCF                     ;SET CARRY FLAG
+        INC     C               ;DRIVE NO. +1
+SLO     ADC     A               ;THIS IS ALL A MYSTERY
+        DEC     C
+        JR      NZ,SLO
+        OR      DRVSIZ OR MTRGO ;DRIVE TYPE AND MOTOR ON
+        LD      (XRPLCA),A      ;SAVE REPLICA OF SELECTION
+        SET     LATCH,A         ;MORE BLACK MAGIC
+;
+        LD      A,(HL)          ;LOAD TRACK ADDR
+        OUT     FDTRK,A         ;SET TRACK ADDR
+        OUT     FDDATA,A        ;SET TRACK ADDR IN DATA REG
+        POP     AF              ;RESTORE COMPARISON CHECK
+        RET     Z
+        LD      A,FDSEEK OR LODHD
+        OUT     FDCMMD,A        ;SEEK TO NEW TRACK
+        RET
+;****************************************************************************
+;       RETURN HL AS POINTER TO TRACK ADDRESS FOR DIRVE IN "A"
+;****************************************************************************
+TRKADR  LD      HL,TRK0
+        OR      A
+        RET     Z               ;RETURN ON DRIVE 0
+        INC     HL              ;ELSE SET TO DRIVE 1
+        RET
+;
+;****************************************************************************
+;       PUNCH ROUTINE
+;****************************************************************************
+PUNCH:  RET                     ;NOT IMPLEMENTED
+;
+;****************************************************************************
+;       READER ROUTINE
+;****************************************************************************
+READER: RET                     ;NOT IMPLEMENTED
+;
+;****************************************************************************
+;       LIST ROUTINES
+;****************************************************************************
+LIST:   LD      A,0FH           ;MAKE PIO AN OUTPUT PORT
+        OUT     (42H),A
+        LD      HL,TABLE        ;INT VECTOR TABLE
+        LD      A,H
+        LD      I,A
+        LD      A,L
+        OUT     (42H),A
+        IM      2
+        LD      A,87H
+        OUT     (42H),A
+        EI
+        LD      A,E
+        OR      A,80H   ;MAKE STB HIGH AT DB25 CONNECTOR
+        OUT     (40H),A
+        AND     A,7FH   ;MAKE STB LOW AT DB25 CONNECTOR
+        OUT     (40H),A
+        NOP
+        NOP
+        NOP
+        OR      A,80H   ;MAKE STB HIGH AT DB25 CONNECTOR
+        OUT     (40H),A
+LOOP    IN      A,(41H) ;POLL KEYBOARD
+        BIT     7,A
+        JR      Z,LOOP
+        CP      1BH     ;HAS AN ESC BEEN DETECTED?
+        JR      NZ,LOOP ;FALL THROUGH IF NO ESC
+        JP      0
+TABLE   DW      SERVICE ;******MUST BE ON EVEN BOUNDARY ******
+SERVICE EXX             ;THROW AWAY RETURN ADDRESS TO POLL
+        POP     HL      ;PROGRAM ABOVE, RETURN TO MAIN
+                        ;PROGRAM
+        LD      A,07H   ;DISABLE PIO INT
+        OUT     (42H),A
+        EXX
+        RETI
+;
+LISTST: RET                     ;NOT IMPLEMENTED
+;
+;****************************************************************************
+;       CONSOLE OUTPUT ROUTINES - USE RESIDENT PROM
+;****************************************************************************
+CONOUT: LD      A,C             ;CALLED WITH CHAR IN 'C'
+        JP      CRTOUT
+CONIN:  JP      KBINPT
+CONST:  CALL    KBHI
+        JR      NZ,KBREAD
+        XOR     A
+        RET                     ;RETURN WITH A=0 IF NO CHAR READY
+KBREAD  LD      A,-1            ;ELSE RETURN WITH A=FF
+        RET
+;
+;* DISK DATA TABLES FOR A 2-DRIVE SYSTEM
+;
+DPBASE  DW      TRANS,0000H     ;HEADER FOR DRIVE 'A'
+        DW      0000H,0000H
+        DW      DIRBF,DPBLK
+        DW      CHK00,ALL00
+;
+        DW      TRANS,0000H     ;HEADER FOR DRIVE 'B'
+        DW      0000H,0000H
+        DW      DIRBF,DPBLK
+        DW      CHK01,ALL01
+;
+;* SECTOR TRANSLATION TABLE
+;
+TRANS   DB      1,7,13,19       ;SECTORS 1,2,3,4
+        DB      25,5,11,17      ;SECTORS 5,6,7,8
+        DB      23,3,9,15       ;SECTORS 9,10,11,12
+        DB      21,2,8,14       ;SECTORS 13,14,15,16
+        DB      20,26,06,12     ;SECTOR 17,18,19,20
+        DB      18,24,4,10      ;SECTORS 21,22,23,24
+        DB      16,22           ;SECTORS 25,26
+;
+;* DISK PARAMETER BLOCK - COMMON TO BOTH DRIVES
+;
+DPBLK   DW      26              ;SECTORS PER TRACK
+        DB      3               ;BLOCK SHIFT FACTOR
+        DB      7               ;BLOCK MASK
+        DB      0               ;NULL MASK
+        DW      242             ;DISK SIZE-1
+        DW      63              ;MAX DIRECTORY COUNT
+        DB      192             ;ALLOC 0
+        DB      0               ;ALLOC 1
+        DW      16              ;CHECK SIZE
+        DW      2               ;TRACK OFFSET TO DIRECTORY
+;
+;****************************************************************************
+;       UNINITIALIZED DATA AREA - NEED NOT BE LOADED
+;****************************************************************************
+;
+DIRBF   DEFS    128             ;DIRECTORY BUFFER AREA
+ALL00   DEFS    ALOCSZ          ;ALLOCATION VECTOR FOR DRIVE 0
+ALL01   DEFS    ALOCSZ          ;ALLOCATION VECTOR FOR DRIVE 1
+CHK00   DEFS    16              ;CHECK VECTOR FOR DRIVE 0
+CHK01   DEFS    16              ;CHECK VECTOR FOR DRIVE 1
+REQDSK  DB      0               ;REQUESTED DRIVE
+CURDSK  DB      0               ;CURRENT DRIVE
+SECTOR  DB      0               ;SECTOR ADDR FOR BOOTSTRAP
+DMAADR  DW      0               ;DMA ADDRESS
+REQTRK  DB      0
+TRK0    DB      0
+TRK1    DB      0
+XRPLCA  DB      31              ;ANOTHER MYSTERY
+CPMMSG  DEFM    0DH,0AH,'62K CPM VER 2.2 SINGLE DENSITY 10-4-85 '
+;
+        END
