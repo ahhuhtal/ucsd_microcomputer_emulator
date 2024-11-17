@@ -1,0 +1,601 @@
+; custom monitor rom to replace zmon
+; implement support for console output control codes missing in zmon
+; does not implement actual memory monitor features
+; is compatible with zbios to allow using on real hw / with real disk images
+
+crt_reg_reset   equ 06h         ; crt9028 reset register address
+crt_reg_tosadd  equ 08h         ; crt9028 top of screen register address
+crt_reg_curlo   equ 09h         ; crt9028 cursor low byte register address
+crt_reg_curhi   equ 0ah         ; crt9028 cursor high byte register address
+crt_reg_filadd  equ 0bh         ; crt9028 fill address register address
+crt_reg_char    equ 0dh         ; crt9028 character register address
+crt_reg_mode    equ 0eh         ; crt9028 mode register address
+
+crt_port_data   equ 44h         ; crt9028 register data io port
+crt_port_addr   equ 45h         ; crt9028 register address io port
+crt_port_status equ 45h         ; crt9028 status io port
+
+pio_reg_data    equ 41h         ; pio data register
+
+disk_port_stat  equ 48h         ; wd2793 status io port
+disk_port_cmd   equ 48h         ; wd2793 command io port
+disk_port_track equ 49h         ; wd2793 track io port
+disk_port_sect  equ 4ah         ; wd2793 sector io port
+disk_port_data  equ 4bh         ; wd2793 data io port
+
+disk_cmd_force  equ 0d0h        ; wd2793 force interrupt command
+disk_cmd_rest   equ 0dh         ; wd2793 restore command
+disk_cmd_read   equ 88h         ; wd2793 read command
+
+                org 0f800h
+
+monitor:        jp start
+                jp conout       ; console output (zbios vector)
+                jp conin        ; console input (zbios vector)
+                jp const        ; console status (zbios vector)
+                jp pmsg         ; print message (zbios vector)
+
+; console output state data
+cursor_col:     db 00h          ; cursor column
+cursor_row:     db 00h          ; cursor row
+mem_row_offset  db 00h          ; row in memory, which is top of screen
+cur_pos_state   db 00h          ; cursor positioning escape code state
+                                ; d7: escape received
+                                ; d6: equals received
+                                ; d5: row received
+                                ; d4...d0: row value
+
+start:          ; initialize stack pointer
+                ld sp, 0ffffh
+
+                ; initialize crt
+                call crt_init
+
+                ; display initial message
+                ld hl, prompt
+                call pmsg
+
+                ; wait for key press
+                call conin
+
+                ; boot from disk
+                jp disk_boot
+
+prompt:         db "Insert boot disk and press any key...", 0
+bootmsg:        db 13, 10, 13, 10, "Data loaded. Booting...", 13, 10, 13, 10, 0
+
+; display a message
+; hl = message address
+; modifies a, f, hl
+pmsg:           ; loop until message is displayed
+                ld a, (hl)
+                cp 0
+                ret z
+                call conout
+                inc hl
+                jr pmsg
+
+; console status
+; modifies a, f
+; returns nz if key pressed, z if not
+const:          in a, (pio_reg_data)
+                bit 7, a
+                ret
+
+; wait for keypress
+; modifies a, f
+; returns pressed key in a
+#local
+conin::          ; loop until key is pressed
+                call const
+                jr z, conin
+                ; mask off status bit
+                and 7fh
+                ; save which key was pressed
+                push af
+loop:          ; wait until key is released
+                in a, (pio_reg_data)
+                bit 7, a
+                jr nz, loop
+                ; restore the pressed key
+                pop af
+                ret
+#endlocal
+
+; initialize crt9028
+; modifies a, f
+crt_init:       push hl
+
+                ; reset crt9028
+                ld a, crt_reg_reset
+                out (crt_port_addr), a
+                ld a, 0
+                out (crt_port_data), a
+
+                ; set top of screen
+                ld a, crt_reg_tosadd
+                out (crt_port_addr), a
+                ld a, 0
+                out (crt_port_data), a
+
+                ; set autoincrement off
+                ld a, crt_reg_mode
+                out (crt_port_addr), a
+                ld a, 00h
+                out (crt_port_data), a
+
+                ld a, 0
+                ; clear escape processing flags
+                ld (cur_pos_state), a
+                ; clear row offset value
+                ld (mem_row_offset), a
+
+                ; set cursor at top left
+                ld hl, 0
+                call move_cursor
+
+                ; clear entire screen
+                ; load filladd as start of memory
+                ld a, crt_reg_filadd
+                out (crt_port_addr), a
+                ld a, 0
+                out (crt_port_data), a
+
+                ; fill memory
+                ld a, crt_reg_char
+                out (crt_port_addr), a
+                call wait_crt_busy
+                ; fill with spaces
+                ld a, ' '
+                out (crt_port_data), a
+                call wait_crt_busy
+
+                pop hl
+                ret
+
+; output character in 'a' to console
+; modifies a, f
+#local
+conout::        push hl
+
+                ld hl, cur_pos_state
+
+                ; are we parsing an esc sequence?
+                bit 7, (hl)
+                jr z, no_esc_parsing
+
+                ; have we seen the equals sign?
+                bit 6, (hl)
+                jr z, parse_equals
+
+                ; have we seen the row value?
+                bit 5, (hl)
+                jr z, parse_row
+
+                ; parse the column value
+                ; is the given value above or equal to 32
+                ; this also removes the bias of 32 from the column
+                sub 32
+                jr c, bad_escape
+
+                ; is the column below 80
+                cp 80
+                jr nc, bad_escape
+
+                ; load column into l
+                ld l, a
+                ; load row into h
+                ld a, (cur_pos_state)
+                and 1fh
+                ld h, a
+                call move_cursor
+
+                ; clear escape code flags
+                ld a, 0
+                ld (cur_pos_state), a
+
+                pop hl
+                ret
+
+parse_equals::  ; is the next character an equals
+                cp '='
+                jr nz, bad_escape
+                ; found equals sign
+                ; raise flag bit
+                set 6, (hl)
+                pop hl
+                ret
+
+parse_row::     ; is the given value above or equal to 32
+                ; this also removes the bias of 32 from the row
+                sub 32
+                jr c, bad_escape
+                ; is the row below 24
+                cp 24
+                jr nc, bad_escape
+                ; load row value with bits 7,6,5 set in to flags
+                or 0e0h
+                ld (hl), a
+                pop hl
+                ret
+
+bad_escape:     ; bad escape sequence encountered
+                ; clear escape processing flags
+                ld (hl), 0
+                pop hl
+                ret
+
+no_esc_parsing:
+                ; is it a control char?
+                cp 31
+                jr nc, is_regular
+
+                ; is it an escape?
+                cp 27
+                jr z, is_escape
+
+                ; is it a carriage return?
+                cp 13
+                jr z, is_car_return
+
+                ; is it a line feed?
+                cp 10
+                jr z, is_line_feed
+
+                ; is it a backspace?
+                cp 8
+                jr z, is_backspace
+
+                ; is it a clear screen?
+                cp 26
+                jr z, is_clear_screen
+
+                ; is it a clear line?
+                cp 24
+                jr z, is_clear_line
+
+                ; is something unknown. ignore.
+                pop hl
+                ret
+
+#local
+is_regular::    ; push the char out
+                push bc
+                ld c, a
+                ld a, crt_reg_char
+                out (crt_port_addr), a
+                call wait_crt_busy
+                ld a, c
+                out (crt_port_data), a
+                call wait_crt_busy
+
+                ; load cursor col and row
+                ; l = column, h = row
+                ld hl, (cursor_col)
+                inc hl
+                ; check if column should wrap
+                ld a, l
+                cp 50h
+                jr nz, do_cursor_upd
+                ld l, 0
+                inc h
+                ; check if row should scroll
+                ld a, h
+                cp 18h
+                jr nz, do_cursor_upd
+                ; scroll the row
+                call scroll_up
+                ld hl, 1700h
+do_cursor_upd:  call move_cursor
+                pop bc
+                pop hl
+                ret
+#endlocal
+
+#local
+is_line_feed::  ; handle line feed
+                ld hl, (cursor_col)
+                inc h
+                ld a, h
+                ; check if row should scroll
+                cp 18h
+                jr nz, do_cursor_upd
+                dec h
+                ; scroll the row
+                call scroll_up
+do_cursor_upd:  call move_cursor
+                pop hl
+                ret
+#endlocal
+
+#local
+is_car_return:: ; handle carriage return
+                ld hl, (cursor_col)
+                ld l, 0
+                call move_cursor
+                pop hl
+                ret
+#endlocal
+
+#local
+is_backspace::  ; handle backspace
+                ld hl, (cursor_col)
+                ld a, l
+                cp 0
+                jr z, done
+                dec l
+                call move_cursor
+done:           pop hl
+                ret
+#endlocal
+
+is_escape:      ; handle escape
+                ; set ecape processing flag
+                ; hl is still pointing to cur_pos_state
+                set 7, (hl)
+                pop hl
+                ret
+
+is_clear_screen:; clear screen and place cursor at top left
+                call crt_init
+                pop hl
+                ret
+
+is_clear_line:  ; clear line from cursor to end
+                ; set filadd as active register in crtc
+                ld a, crt_reg_filadd
+                out (crt_port_addr), a
+
+                ; get cursor display position in hl
+                ld hl, (cursor_col)
+                ; calculate absolute row
+                call get_abs_row
+                ; get row address in filadd format
+                ld a, h
+                call get_row_addr_short
+                ; add 5 to get address of row end (plus 1)
+                add 5
+                ; set fill address
+                out (crt_port_data), a
+
+                ; perform fill
+                ld a, crt_reg_char
+                out (crt_port_addr), a
+                call wait_crt_busy
+                ; fill with spaces
+                ld a, ' '
+                out (crt_port_data), a
+                call wait_crt_busy
+
+                pop hl
+                ret
+#endlocal
+
+; wait until crt9028 is ready
+; modifies a, f
+wait_crt_busy:  in a, (crt_port_status)
+                bit 7, a
+                jr z, wait_crt_busy
+                ret
+
+; move cursor to display row = h, col = l
+; returns cursor absolute address in hl
+; modifies a, f
+#local
+move_cursor::
+                ; store cursor position to memory
+                ld (cursor_col), hl
+                call get_abs_row
+                jr set_cursor
+#endlocal
+
+; set cursor to absolute row = h, col = l
+; returns cursor absolute address in hl
+; modifies a, f
+#local
+set_cursor::
+                ; calculate cursor address
+                call calc_abs_cursor
+                ; store cursor low address byte to crt9028
+                ld a, crt_reg_curlo
+                out (crt_port_addr), a
+                ld a, l
+                out (crt_port_data), a
+                ; store cursor high address byte to crt9028
+                ld a, crt_reg_curhi
+                out (crt_port_addr), a
+                ld a, h
+                out (crt_port_data), a
+                ret
+#endlocal
+
+; calculate absolute row from display row
+; input: display row = h
+; output: absolute row = h
+; modifies a, f
+#local
+get_abs_row::   ld a, (mem_row_offset)
+                add h
+                ; does row exceed 24? if so, wrap row
+                cp 19h
+                jr c, row_in_range
+                sub 19h
+row_in_range:   ld h, a
+                ret
+#endlocal
+
+; calculate absolute cursor address
+; input absolute cursor row = h, col = l
+; returns cursor absolute address in hl
+; modifies a, f
+#local
+calc_abs_cursor::
+                push bc
+                ; save column
+                ld b, 0
+                ld c, l
+                ; get absolute row in a
+                ld a, h
+                ; get in hl start address of row in a
+                call get_row_addr_long
+                ; add column
+                add hl, bc
+                pop bc
+                ret
+#endlocal
+
+; scroll display up
+; modifies a, f
+#local
+scroll_up::     push hl
+                ; clear the row which is before mem_row_offset
+                ld a, crt_reg_filadd
+                out (crt_port_addr), a
+
+                ; set filadd to beginning of current top of screen row
+                ld a, (mem_row_offset)
+                call get_row_addr_short
+                out (crt_port_data), a
+
+                ; compute the previous row
+                ld a, (mem_row_offset)
+                cp 0
+                jr nz, wrap_handled
+                ld a, 19h
+wrap_handled:   ; get cursor address of beginning of previous row
+                dec a
+                ; set h, l = a, 0
+                ld h, a
+                ld l, 0
+                ; set cursor
+                call set_cursor
+
+                ; perform fill with spaces
+                ld a, crt_reg_char
+                out (crt_port_addr), a
+                call wait_crt_busy
+                ld a, ' '
+                out (crt_port_data), a
+                call wait_crt_busy
+
+                ; restore cursor position
+                ld hl, (cursor_col)
+                call move_cursor
+
+                ; perform scroll
+                ; select tosadd register
+                ld a, crt_reg_tosadd
+                out (crt_port_addr), a
+                ; increment memory offset row
+                ld a, (mem_row_offset)
+                inc a
+                ; wrap row if it exceeds row 24
+                cp 19h
+                jr c, row_in_range
+                sub 19h
+row_in_range:   ; store new offset to memory
+                ld (mem_row_offset), a
+                ; convert row to address
+                call get_row_addr_short
+                out (crt_port_data), a
+                pop hl
+                ret
+#endlocal
+
+#local
+; row start address table
+row_start::     db 000, 005, 010, 015, 020
+                db 025, 030, 035, 040, 045
+                db 050, 055, 060, 065, 070
+                db 075, 080, 085, 090, 095
+                db 100, 105, 110, 115, 120
+
+; lookup absolute row begin address (in tosadd and filadd format)
+; in: a = row to lookup
+; out: a = address
+get_row_addr_short::
+                push hl
+                ; assume row_start does not cross 256 byte boundary
+                ; calculate hl = row_start + a
+                ld hl, row_start
+                add l
+                ld l, a
+                ; load value from table
+                ld a, (hl)
+                pop hl
+                ret
+
+; lookup absolute row begin address (in cursor format)
+; in: a = row to lookup
+; out: hl = address
+; modifies a, f
+get_row_addr_long::
+                ; assume row_start does not cross 256 byte boundary
+                ; calculate hl = row_start + a
+                ld hl, row_start
+                add l
+                ld l, a
+                ; load value from table
+                ld a, (hl)
+                ld h, 0
+                ld l, a
+                ; h,l = 0,a
+                ; calculate hl = 16 * hl
+                add hl, hl
+                add hl, hl
+                add hl, hl
+                add hl, hl
+                ret
+
+; assert that row_start does not cross 256 byte page boundary
+.assert (row_start % 256) < (256 - 25)
+#endlocal
+
+; boot from wd2793
+; does not return
+#local
+disk_boot::     ; interrupt any previous command
+                ld a, disk_cmd_force
+                out (disk_port_cmd), a
+                call disk_wait_busy
+                ; restore = seek to track 0
+                ld a, disk_cmd_rest
+                out (disk_port_cmd), a
+                call disk_wait_busy
+                ; load data from sector 1
+                ld a, 1
+                out (disk_port_sect), a
+                ; start sector read
+                ld a, disk_cmd_read
+                out (disk_port_cmd), a
+                ; use ini for loading:
+                ; hl = 0080h, load to address
+                ; b = 128, load amount
+                ; c = disk_port_data, load from port
+                ld hl, 0080h
+                ld b, 80h
+                ld c, disk_port_data
+
+get_data:       ; check if data is available, loop back if not
+                in a, disk_port_stat
+                bit 1, a
+                jr z, get_data
+                ; read a byte of data
+                ini
+                ; get next byte, if b is not 0
+                jr nz, get_data
+
+                ; display message
+                ld hl, bootmsg
+                call pmsg
+
+                ; jump to entry point in 0080h
+                jp 0080h
+#endlocal
+
+; wait until bit 0 of disk status port is low
+; modifies a, f
+disk_wait_busy: in a, (disk_port_stat)
+                bit 0, a
+                jr nz, disk_wait_busy
+                ret

@@ -1,3 +1,4 @@
 #!/bin/sh
 
-rm -f zmon.lst zmon.rom ../ram.bin
+rm -f zmon.lst zmon.rom altmon.lst altmon.rom ../ram.bin
+
