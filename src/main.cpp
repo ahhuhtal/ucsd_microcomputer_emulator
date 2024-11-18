@@ -6,6 +6,7 @@
 #include <vector>
 #include <chrono>
 #include <thread>
+#include <string>
 
 #include <fmt/format.h>
 
@@ -224,6 +225,10 @@ public:
         this->disk.load_disk_image(file_name);
     }
 
+    void save_disk_image(const std::string& file_name) {
+        this->disk.save_disk_image(file_name);
+    }
+
 private:
     /**
      * CPU state
@@ -271,6 +276,22 @@ private:
     char keyboard_char{};
 };
 
+const std::string poll_input() {
+    int bytes_available;
+
+    if (ioctl(0, FIONREAD, &bytes_available) < 0) {
+        throw std::runtime_error(fmt::format("ioctl: {}", strerror(errno)));
+    }
+
+    if (bytes_available > 0) {
+        std::string line;
+        std::getline(std::cin, line);
+
+        return line;
+    }
+
+    return std::string{};
+}
 
 int main() {
     Terminal pty;
@@ -281,7 +302,9 @@ int main() {
 
     machine.load_rom_image("rom.bin");
     machine.load_ram_image("ram.bin");
-    machine.load_disk_image("disk.bin");
+
+    std::string disk_file_name("disk.bin");
+    machine.load_disk_image(disk_file_name);
 
     bool quit = false;
     size_t cycles_since_update{};
@@ -289,7 +312,47 @@ int main() {
 
     const auto start = std::chrono::steady_clock::now();
 
+    fmt::print(">");
+    std::flush(std::cout);
+
     while (!quit) {
+        // interactive
+        std::string input = poll_input();
+        if (input.size() > 0) {
+            if (input == "exit" || input == "quit") {
+                quit = true;
+            } else if (input.compare(0, 9, "save_disk") == 0) {
+                std::string arg;
+                if (input.size() >= 10) {
+                    arg = input.substr(10);
+                }
+                if (arg.size() > 0) {
+                    machine.save_disk_image(arg);
+                } else {
+                    machine.save_disk_image(disk_file_name);
+                }
+
+                fmt::print("Saved disk image\n");
+            } else if (input.compare(0, 9, "load_disk") == 0) {
+                std::string arg;
+                if (input.size() >= 10) {
+                    arg = input.substr(10);
+                }
+                if (arg.size() > 0) {
+                    machine.load_disk_image(arg);
+                } else {
+                    machine.load_disk_image(disk_file_name);
+                }
+
+                fmt::print("Loaded disk image\n");
+            } else {
+                fmt::print("Unknown command\n");
+            }
+
+            fmt::print(">");
+            std::flush(std::cout);
+        }
+
         size_t cycles = machine.step();
         cycles_since_update += cycles;
         cycles_since_start += cycles;

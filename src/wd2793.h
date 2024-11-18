@@ -199,6 +199,18 @@ public:
 
         fid.close();
     }
+
+    void save_disk_image(const std::string& file_name) {
+        std::ofstream fid;
+        fid.open(file_name,std::ios::out);
+        if (!fid) {
+            throw std::runtime_error(fmt::format("WD2792 could not open disk image {}", file_name));
+        }
+
+        fid.write(reinterpret_cast<char*>(this->disk_data.data()),this->disk_data.size());
+
+        fid.close();
+    }
 private:
     enum class Command {
         Restore, Seek, Step, StepIn, StepOut,
