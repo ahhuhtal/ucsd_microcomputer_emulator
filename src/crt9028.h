@@ -246,10 +246,22 @@ public:
 
         auto determine_character = [&](uint8_t memory_value) {
             if ( (memory_value & 0x7f) < 32) {
-                return ' ';
+                return std::string(" ");
             }
 
-            return static_cast<char>(memory_value & 0x7f);
+            std::string repr;
+
+            if (memory_value & 0x80) {
+                repr += "\033[7m";
+            }
+
+            repr += static_cast<char>(memory_value & 0x7f);
+
+            if (memory_value & 0x80) {
+                repr += "\033[m";
+            }
+
+            return repr;
         };
 
 
