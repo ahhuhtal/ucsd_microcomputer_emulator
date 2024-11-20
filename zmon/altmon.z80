@@ -39,11 +39,18 @@ monitor:        jp start
 cursor_col:     db 00h          ; cursor column
 cursor_row:     db 00h          ; cursor row
 mem_row_offset  db 00h          ; row in memory, which is top of screen
-cur_pos_state   db 00h          ; cursor positioning escape code state
-                                ; d7: escape received
-                                ; d6: equals received
-                                ; d5: row received
-                                ; d4...d0: row value
+
+escape_state    db 00h          ; escape code decoding state
+                                ; d0: escape received
+                                ; d1: command received
+                                ; d2: B received (attribute on)
+                                ; d3: C received (attribute off)
+                                ; d4: row received
+
+cur_pos_row     db 00h          ; when cursor positioning escape is received,
+                                ; store row value here
+
+attribute_on    db 00h          ; is attribute currently applied?
 
 start:          ; initialize stack pointer
                 ld sp, 0ffffh
@@ -126,7 +133,7 @@ crt_init:       push hl
 
                 ld a, 0
                 ; clear escape processing flags
-                ld (cur_pos_state), a
+                ld (escape_state), a
                 ; clear row offset value
                 ld (mem_row_offset), a
 
@@ -158,18 +165,26 @@ crt_init:       push hl
 #local
 conout::        push hl
 
-                ld hl, cur_pos_state
+                ld hl, escape_state
 
                 ; are we parsing an esc sequence?
-                bit 7, (hl)
+                bit 0, (hl)
                 jr z, no_esc_parsing
 
-                ; have we seen the equals sign?
-                bit 6, (hl)
-                jr z, parse_equals
+                ; are we waiting for the command?
+                bit 1, (hl)
+                jr z, parse_command
+
+                ; was the command a 'B'?
+                bit 2, (hl)
+                jr nz, set_attribute
+
+                ; was the command a 'C'?
+                bit 3, (hl)
+                jr nz, clear_attribute
 
                 ; have we seen the row value?
-                bit 5, (hl)
+                bit 4, (hl)
                 jr z, parse_row
 
                 ; parse the column value
@@ -185,26 +200,44 @@ conout::        push hl
                 ; load column into l
                 ld l, a
                 ; load row into h
-                ld a, (cur_pos_state)
-                and 1fh
+                ld a, (cur_pos_row)
                 ld h, a
                 call move_cursor
 
-                ; clear escape code flags
+                ; reset escape state
                 ld a, 0
-                ld (cur_pos_state), a
-
+                ld (escape_state), a
                 pop hl
                 ret
 
-parse_equals::  ; is the next character an equals
+#local
+parse_command:: ; is the next character an equals?
                 cp '='
+                jr z, is_equals
+                ; is the next character a 'B'?
+                cp 'B'
+                jr z, is_B
+                ; is the next character a 'C'?
+                cp 'C'
                 jr nz, bad_escape
-                ; found equals sign
-                ; raise flag bit
-                set 6, (hl)
+                ; found 'C'
+                ; raise command received and 'C' received flags
+                set 1, (hl)
+                set 3, (hl)
                 pop hl
                 ret
+is_B:           ; found 'B'
+                ; raise command received and 'B' received flags
+                set 1, (hl)
+                set 2, (hl)
+                pop hl
+                ret
+is_equals:      ; found equals sign
+                ; raise command received flag bit
+                set 1, (hl)
+                pop hl
+                ret
+#endlocal
 
 parse_row::     ; is the given value above or equal to 32
                 ; this also removes the bias of 32 from the row
@@ -213,11 +246,20 @@ parse_row::     ; is the given value above or equal to 32
                 ; is the row below 24
                 cp 24
                 jr nc, bad_escape
-                ; load row value with bits 7,6,5 set in to flags
-                or 0e0h
-                ld (hl), a
+                ld (cur_pos_row), a
+                set 4, (hl)
                 pop hl
                 ret
+
+set_attribute:: ; set attribute flag
+                ld a, 80h
+                ld (attribute_on), a
+                jr bad_escape
+
+clear_attribute:: ; set attribute flag
+                ld a, 0
+                ld (attribute_on), a
+                jr bad_escape
 
 bad_escape:     ; bad escape sequence encountered
                 ; clear escape processing flags
@@ -260,12 +302,14 @@ no_esc_parsing:
 
 #local
 is_regular::    ; push the char out
-                push bc
-                ld c, a
+                ld l, a
+                ld a, (attribute_on)
+                or l
+                ld l, a
                 ld a, crt_reg_char
                 out (crt_port_addr), a
                 call wait_crt_busy
-                ld a, c
+                ld a, l
                 out (crt_port_data), a
                 call wait_crt_busy
 
@@ -287,7 +331,6 @@ is_regular::    ; push the char out
                 call scroll_up
                 ld hl, 1700h
 do_cursor_upd:  call move_cursor
-                pop bc
                 pop hl
                 ret
 #endlocal
@@ -331,8 +374,8 @@ done:           pop hl
 
 is_escape:      ; handle escape
                 ; set ecape processing flag
-                ; hl is still pointing to cur_pos_state
-                set 7, (hl)
+                ; hl is still pointing to escape_state
+                set 0, (hl)
                 pop hl
                 ret
 
