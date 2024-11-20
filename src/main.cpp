@@ -229,6 +229,11 @@ public:
         this->disk.save_disk_image(file_name);
     }
 
+    void reset() {
+        this->rom_mapped = true;
+        z80_instant_reset(&this->cpu);
+    }
+
 private:
     /**
      * CPU state
@@ -345,6 +350,9 @@ int main() {
                 }
 
                 fmt::print("Loaded disk image\n");
+            } else if (input.compare(0, 5, "reset") == 0) {
+                fmt::print("Resetting system\n");
+                machine.reset();
             } else {
                 fmt::print("Unknown command\n");
             }
