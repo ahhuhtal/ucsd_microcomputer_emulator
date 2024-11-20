@@ -306,7 +306,6 @@ int main() {
     MachineContext machine;
 
     machine.load_rom_image("rom.bin");
-    machine.load_ram_image("ram.bin");
 
     std::string disk_file_name("disk.bin");
     machine.load_disk_image(disk_file_name);

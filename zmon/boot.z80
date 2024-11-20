@@ -1,0 +1,21 @@
+; ROM bootloader recreation for UCSD microcomputer
+;
+; Original ROM appears to be damaged, which prevents the reading of
+; the original boot loader.
+; The ROM is in the memory read address space after reset,
+; mapped to 0000 - 1fff
+; The bootloader most likely just copies ZMON into the expected
+; place in memory and jumps there.
+
+        .org 0000h
+
+zmon_src_addr equ 10h
+zmon_dst_addr equ 0f800h
+zmon_len equ 700h
+
+reset_vector:
+        ld de, zmon_dst_addr
+        ld hl, zmon_src_addr
+        ld bc, zmon_len
+        ldir
+        jp zmon_dst_addr
