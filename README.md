@@ -1,6 +1,6 @@
 # Emulator for UCSD microcomputer
 
-An emulator for a forgotten Z80-based single board CP/M computer, designed by Chris Poulos in 1985. Apparently Chris Poulos taught a microcomputer engineering class an the UCSD Extension Program in the fall of 1985.
+An emulator for a forgotten Z80-based single board CP/M computer, designed by Chris Poulos in 1985. Apparently Chris Poulos taught a microcomputer engineering class at the UCSD Extension Program in the fall of 1985.
 
 In addition to the emulator, documentation regarding the computer is also gathered here. Most of it is from the course notes of a person who took the course back then and built the computer. The rest is from investigating the existing artifacts.
 
@@ -24,7 +24,7 @@ An interesting quirk is that coming out of reset, the ROM is mapped to 0x0000 th
 
 Z80 starts execution at 0000. This address must contain some type of bootloader, which copies the ZMON monitor program from ROM into F800 where it resides during execution. Unfortunately, the ROM I have has resisted recent attempts to read it, and it may be damaged.
 
-The ROM gets unmapped from memory omce any read is performed on the IO bus. The ROM will only get remapped via pressing the reset button.
+The ROM gets unmapped from memory once any read is performed on the IO bus. The ROM will only get remapped via pressing the reset button.
 
 ## Usage
 
@@ -79,7 +79,7 @@ This assembler appears to have supported some non-common instruction syntaxes th
 - AND A,7FH <- standard syntax of AND takes a single operand
 - `''''` is used to denote the ASCII code of the apostrophe, i.e. 0x27
 
-Turns out that the Günter Vogk's zasm (see references), supports these constructs except the last one and can directly process most of the original files.
+Turns out that the Günter Woigk's zasm (see references), supports these constructs except the last one and can directly process most of the original files.
 
 ## References
 

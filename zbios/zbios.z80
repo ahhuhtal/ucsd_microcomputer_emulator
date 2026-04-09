@@ -9,7 +9,7 @@
 ; AT F800H.
 ;
 ;                                       RON BRUCK SEPT 1984
-; MODIFIED 9/14/95 FOR PRINTER OUTPUT !!!!!! INT TABLE MUST BE ON EVEN
+; MODIFIED 9/14/85 FOR PRINTER OUTPUT !!!!!! INT TABLE MUST BE ON EVEN
 ; BOUNDARY !!!!!!
 ;***********************************************************************
         ORG     0F200H          ;64K BIOS LOCATION
