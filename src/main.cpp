@@ -177,7 +177,7 @@ public:
         std::ifstream fid;
         fid.open(file_name,std::ios::in);
         if (!fid) {
-            throw std::runtime_error(fmt::format("could not open RAM image {}", file_name));
+            throw std::runtime_error(fmt::format("could not open RAM image file {}", file_name));
         }
 
         fid.seekg(0, std::ios::end);
@@ -194,7 +194,7 @@ public:
         std::ifstream fid;
         fid.open(file_name,std::ios::in);
         if (!fid) {
-            throw std::runtime_error(fmt::format("could not open ROM image {}", file_name));
+            throw std::runtime_error(fmt::format("could not open ROM image file {}", file_name));
         }
 
         fid.seekg(0, std::ios::end);
@@ -305,10 +305,19 @@ int main() {
 
     MachineContext machine;
 
-    machine.load_rom_image("rom.bin");
+    try {
+        machine.load_rom_image("rom.bin");
+    } catch (const std::exception& e) {
+        fmt::print(stderr, "Error: failure loading ROM image: {}\n", e.what());
+        return 1;
+    }
 
     std::string disk_file_name("disk.bin");
-    machine.load_disk_image(disk_file_name);
+    try {
+        machine.load_disk_image(disk_file_name);
+    } catch (const std::exception& e) {
+        fmt::print(stderr, "Warning: failure loading default disk image: {}\n", e.what());
+    }
 
     bool quit = false;
     size_t cycles_since_update{};
@@ -316,39 +325,53 @@ int main() {
 
     const auto start = std::chrono::steady_clock::now();
 
-    fmt::print(">");
+    fmt::print("> ");
     std::flush(std::cout);
 
     while (!quit) {
         // interactive
         std::string input = poll_input();
         if (input.size() > 0) {
-            if (input == "exit" || input == "quit") {
+            if (input == "help" || input == "?") {
+                fmt::print("Available commands:\n");
+                fmt::print("  help, ?: Show this help message\n");
+                fmt::print("  exit, quit: Exit the emulator\n");
+                fmt::print("  save_disk [file_name]: Save disk image to file (default: {})\n", disk_file_name);
+                fmt::print("  load_disk [file_name]: Load disk image from file (default: {})\n", disk_file_name);
+                fmt::print("  reset: Reset the system\n");
+            } else if (input == "exit" || input == "quit") {
                 quit = true;
+                continue;
             } else if (input.compare(0, 9, "save_disk") == 0) {
                 std::string arg;
                 if (input.size() >= 10) {
                     arg = input.substr(10);
                 }
-                if (arg.size() > 0) {
-                    machine.save_disk_image(arg);
-                } else {
-                    machine.save_disk_image(disk_file_name);
+                try {
+                    if (arg.size() > 0) {
+                        machine.save_disk_image(arg);
+                    } else {
+                        machine.save_disk_image(disk_file_name);
+                    }
+                    fmt::print("Saved disk image\n");
+                } catch (const std::exception& e) {
+                    fmt::print(stderr, "Warning: failure saving disk image: {}\n", e.what());
                 }
-
-                fmt::print("Saved disk image\n");
             } else if (input.compare(0, 9, "load_disk") == 0) {
                 std::string arg;
                 if (input.size() >= 10) {
                     arg = input.substr(10);
                 }
-                if (arg.size() > 0) {
-                    machine.load_disk_image(arg);
-                } else {
-                    machine.load_disk_image(disk_file_name);
+                try {
+                    if (arg.size() > 0) {
+                        machine.load_disk_image(arg);
+                    } else {
+                        machine.load_disk_image(disk_file_name);
+                    }
+                    fmt::print("Loaded disk image\n");
+                } catch (const std::exception& e) {
+                    fmt::print(stderr, "Warning: failure loading disk image: {}\n", e.what());
                 }
-
-                fmt::print("Loaded disk image\n");
             } else if (input.compare(0, 5, "reset") == 0) {
                 fmt::print("Resetting system\n");
                 machine.reset();
@@ -356,7 +379,8 @@ int main() {
                 fmt::print("Unknown command\n");
             }
 
-            fmt::print(">");
+            // show prompt again after command
+            fmt::print("> ");
             std::flush(std::cout);
         }
 

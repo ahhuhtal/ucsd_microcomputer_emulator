@@ -187,7 +187,7 @@ public:
         std::ifstream fid;
         fid.open(file_name,std::ios::in);
         if (!fid) {
-            throw std::runtime_error(fmt::format("WD2792 could not open disk image {}", file_name));
+            throw std::runtime_error(fmt::format("WD2792 could not open disk image file {}", file_name));
         }
 
         fid.seekg(0, std::ios::end);
