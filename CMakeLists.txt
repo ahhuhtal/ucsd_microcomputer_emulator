@@ -12,6 +12,14 @@ set(MONITOR "ZMON" CACHE STRING "Select monitor to build (ZMON or ALTMON)")
 find_program(ZASM zasm)
 find_program(PYTHON python3)
 
+option(USE_SDL "Use SDL for graphics and input" OFF)
+
+if(USE_SDL)
+    find_package(SDL2 REQUIRED)
+    target_link_libraries(ucsd_emu SDL2::SDL2)
+    add_compile_definitions(USE_SDL)
+endif()
+
 if(NOT ZASM)
     message(FATAL_ERROR "ZASM not found")
 endif()

@@ -12,6 +12,10 @@
 
 #include <Z80.h>
 
+#ifdef USE_SDL
+#include <SDL.h>
+#endif
+
 #include "crt9028.h"
 #include "wd2793.h"
 #include "terminal.h"
@@ -211,14 +215,24 @@ public:
         return Z80_PC(this->cpu);
     }
 
-    std::string render_screen(bool render_border = true) {
+    std::string render_screen_vt100(bool render_border = true) {
         return this->crt.render_screen_vt100(render_border);
     }
 
+#ifdef USE_SDL
+    void render_screen_sdl(SDL_Texture* screen) {
+        this->crt.render_screen_sdl(screen);
+    }
+#endif
+
     void keyboard_input(const std::string& input) {
         for (const auto& ch : input) {
-            this->keyboard_buffer.push_back(ch);
+            keyboard_input_char(ch);
         }
+    }
+
+    void keyboard_input_char(char ch) {
+        this->keyboard_buffer.push_back(ch);
     }
 
     void load_disk_image(const std::string& file_name) {
@@ -320,8 +334,26 @@ int main() {
     }
 
     bool quit = false;
-    size_t cycles_since_update{};
+    size_t pty_cycles_since_update{};
     size_t cycles_since_start{};
+
+#if USE_SDL
+    size_t sdl_cycles_since_update{};
+
+    SDL_Window* sdl_window = SDL_CreateWindow(
+        "UCSD Microcomputer Emulator",
+        SDL_WINDOWPOS_UNDEFINED,
+        SDL_WINDOWPOS_UNDEFINED,
+        1000, 750,
+        SDL_WINDOW_SHOWN | SDL_WINDOW_RESIZABLE
+    );
+    SDL_Renderer* sdl_renderer = SDL_CreateRenderer(sdl_window, -1, SDL_RENDERER_ACCELERATED);
+
+    SDL_Texture* texture = SDL_CreateTexture(sdl_renderer, SDL_PIXELFORMAT_RGBA8888, SDL_TEXTUREACCESS_STREAMING, 560, 1250);
+    SDL_SetTextureScaleMode(texture, SDL_ScaleModeBest);
+
+    SDL_StartTextInput();
+#endif
 
     const auto start = std::chrono::steady_clock::now();
 
@@ -385,20 +417,62 @@ int main() {
         }
 
         size_t cycles = machine.step();
-        cycles_since_update += cycles;
         cycles_since_start += cycles;
 
         std::this_thread::sleep_until(
             start + std::chrono::microseconds(cycles_since_start / 4)
         );
 
+        pty_cycles_since_update += cycles;
+
         if (pty.is_pty_attached()) {
-            if (cycles_since_update >= 80000) {
-                cycles_since_update = 0;
-                pty.write_output(machine.render_screen(true));
+            if (pty_cycles_since_update >= 80000) {
+                pty_cycles_since_update = 0;
+                pty.write_output(machine.render_screen_vt100(true));
             }
 
             machine.keyboard_input(pty.read_input());
         }
+
+#ifdef USE_SDL
+        sdl_cycles_since_update += cycles;
+
+        if (sdl_cycles_since_update >= 80000) {
+            sdl_cycles_since_update = 0;
+            machine.render_screen_sdl(texture);
+
+            SDL_RenderClear(sdl_renderer);
+            SDL_RenderCopyF(sdl_renderer, texture, nullptr, nullptr);
+            SDL_RenderPresent(sdl_renderer);
+        }
+
+        SDL_Event sdl_event;
+        while (SDL_PollEvent(&sdl_event)) {
+            if (sdl_event.type == SDL_QUIT) {
+                quit = true;
+            }
+            if (sdl_event.type == SDL_TEXTINPUT) {
+                machine.keyboard_input(sdl_event.text.text);
+            }
+            if (sdl_event.type == SDL_KEYDOWN) {
+                if (sdl_event.key.keysym.sym == SDLK_RETURN) {
+                    machine.keyboard_input_char(13);
+                }
+
+                if (sdl_event.key.keysym.sym == SDLK_BACKSPACE) {
+                    machine.keyboard_input_char(127);
+                }
+
+                if (sdl_event.key.keysym.sym == SDLK_ESCAPE) {
+                    machine.keyboard_input_char(27);
+                }
+            }
+        }
+#endif
     }
+
+#ifdef USE_SDL
+    SDL_StopTextInput();
+    SDL_Quit();
+#endif
 }

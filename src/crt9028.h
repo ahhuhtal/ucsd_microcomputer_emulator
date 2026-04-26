@@ -7,6 +7,10 @@
 
 #include <fmt/format.h>
 
+#ifdef USE_SDL
+#include "crt9028_font.h"
+#endif
+
 class CRT9028 {
 public:
     CRT9028() : video_memory{}, screen_changed{true} {}
@@ -169,7 +173,7 @@ public:
         }
     };
 
-    std::string render_screen(bool render_border = false) {
+    std::string render_screen_ascii(bool render_border = false) {
         this->screen_changed = false;
 
         std::string screen;
@@ -339,6 +343,118 @@ public:
         }
         return screen;
     };
+
+#ifdef USE_SDL
+    void render_font_glyph(SDL_Surface* const surface, const size_t row, const size_t col, const size_t glyph) {
+        if (glyph >= 128) {
+            return;
+        }
+
+        const int x = col * 7;
+        const int y = row * 50;
+
+        uint32_t pixel_set_value = SDL_MapRGB(surface->format, 0, 255, 0);
+        uint32_t pixel_unset_value = SDL_MapRGB(surface->format, 0, 32, 0);
+        uint32_t* pixels = static_cast<uint32_t*>(surface->pixels);
+
+        for (size_t font_y = 0; font_y < 10; font_y += 1) {
+            for (size_t font_x = 0; font_x < 7; font_x += 1) {
+                bool pixel_set;
+
+                if (font_y >= 1 && font_y <= 8 && font_x >= 1 && font_x <= 5) {
+                    pixel_set = (font[glyph][font_y - 1] & (1 << (5 - font_x))) != 0;
+                } else {
+                    pixel_set = false;
+                }
+
+                if (pixel_set) {
+                    pixels[ (y + 5 * font_y + 0) * surface->pitch / 4 + x + font_x] = pixel_set_value;
+                    pixels[ (y + 5 * font_y + 1) * surface->pitch / 4 + x + font_x] = pixel_set_value;
+                } else {
+                    pixels[ (y + 5 * font_y + 0) * surface->pitch / 4 + x + font_x] = pixel_unset_value;
+                    pixels[ (y + 5 * font_y + 1) * surface->pitch / 4 + x + font_x] = pixel_unset_value;
+                }
+            }
+        }
+    }
+
+    void render_cursor(SDL_Surface* const surface, const size_t row, const size_t col) {
+        const int x = col * 7;
+        const int y = row * 50;
+
+        uint32_t pixel_set_value = SDL_MapRGB(surface->format, 0, 255, 0);
+        uint32_t* pixels = static_cast<uint32_t*>(surface->pixels);
+
+        for (size_t font_y = 0; font_y < 10; font_y += 1) {
+            for (size_t font_x = 0; font_x < 7; font_x += 1) {
+                pixels[ (y + 5 * font_y + 0) * surface->pitch / 4 + x + font_x] = pixel_set_value;
+                pixels[ (y + 5 * font_y + 1) * surface->pitch / 4 + x + font_x] = pixel_set_value;
+            }
+        }
+    }
+
+    void render_screen_sdl(SDL_Texture* screen) {
+        auto determine_character = [&](uint8_t memory_value) {
+            if ( (memory_value & 0x7f) < 32) {
+                return ' ';
+            }
+
+            return static_cast<char>(memory_value & 0x7f);
+        };
+
+        SDL_Surface* surface;
+        SDL_LockTextureToSurface(screen, NULL, &surface);
+        SDL_FillRect(surface, nullptr, SDL_MapRGB(surface->format, 0, 0, 0));
+
+        // output 24 lines of output
+        for (size_t offset = 0; offset < 1920; offset++) {
+            uint16_t address;
+
+            if (this->status_line_enabled) {
+                address = (this->top_of_screen_address + offset) % (this->video_memory.size() - 80);
+            } else {
+                address = (this->top_of_screen_address + offset) % this->video_memory.size();
+            }
+
+            size_t row = offset / 80;
+            size_t col = offset % 80;
+
+            render_font_glyph(surface, row, col, determine_character(this->video_memory[address]));
+        }
+        // if status line is enabled, output it on line 25
+        if (this->status_line_enabled) {
+            size_t row = 24;
+            for (size_t status_address = 1920; status_address < this->video_memory.size(); status_address++) {
+                size_t col = status_address % 80;
+
+                render_font_glyph(surface, row, col, determine_character(this->video_memory[status_address]));
+            }
+        } else {
+            size_t row = 24;
+            for (size_t status_address = 1920; status_address < this->video_memory.size(); status_address++) {
+                size_t col = status_address % 80;
+
+                render_font_glyph(surface, row, col, ' ');
+            }
+        }
+
+        size_t cursor_row, cursor_col;
+
+        if (this->cursor_register >= this->top_of_screen_address) {
+            size_t cursor_screen_address = this->cursor_register - this->top_of_screen_address;
+            cursor_row = cursor_screen_address / 80;
+            cursor_col = cursor_screen_address % 80;
+        } else {
+            size_t cursor_screen_address = this->cursor_register + this->video_memory.size() - this->top_of_screen_address;
+            cursor_row = cursor_screen_address / 80;
+            cursor_col = cursor_screen_address % 80;
+        }
+
+        render_cursor(surface, cursor_row, cursor_col);
+
+        SDL_UnlockTexture(screen);
+    }
+#endif
 
 private:
     /**
