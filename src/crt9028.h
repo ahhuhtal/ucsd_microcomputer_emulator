@@ -274,6 +274,9 @@ public:
             screen += std::string(82, '-');
         }
 
+        // cursor position
+        size_t cursor_offset{};
+
         // output 24 lines of output
         for (size_t offset = 0; offset < 1920; offset++) {
             uint16_t address;
@@ -282,6 +285,10 @@ public:
                 address = (this->top_of_screen_address + offset) % (this->video_memory.size() - 80);
             } else {
                 address = (this->top_of_screen_address + offset) % this->video_memory.size();
+            }
+
+            if (address == this->cursor_register) {
+                cursor_offset = offset;
             }
 
             if ((offset % 80) == 0) {
@@ -325,17 +332,9 @@ public:
         }
 
         // move cursor to where the crt9028 cursor is
-        size_t row, col;
+        size_t row = cursor_offset / 80;
+        size_t col = cursor_offset % 80;
 
-        if (this->cursor_register >= this->top_of_screen_address) {
-            size_t cursor_screen_address = this->cursor_register - this->top_of_screen_address;
-            row = cursor_screen_address / 80;
-            col = cursor_screen_address % 80;
-        } else {
-            size_t cursor_screen_address = this->cursor_register + this->video_memory.size() - this->top_of_screen_address;
-            row = cursor_screen_address / 80;
-            col = cursor_screen_address % 80;
-        }
         if (render_border) {
             screen += fmt::format("\033[{};{}H", row+2, col+2);
         } else {
@@ -406,6 +405,9 @@ public:
         SDL_LockTextureToSurface(screen, NULL, &surface);
         SDL_FillRect(surface, nullptr, SDL_MapRGB(surface->format, 0, 0, 0));
 
+        // cursor position
+        size_t cursor_offset{};
+
         // output 24 lines of output
         for (size_t offset = 0; offset < 1920; offset++) {
             uint16_t address;
@@ -419,7 +421,11 @@ public:
             size_t row = offset / 80;
             size_t col = offset % 80;
 
-            render_font_glyph(surface, row, col, determine_character(this->video_memory[address]));
+            if (address == this->cursor_register) {
+                render_cursor(surface, row, col);
+            } else {
+                render_font_glyph(surface, row, col, determine_character(this->video_memory[address]));
+            }
         }
         // if status line is enabled, output it on line 25
         if (this->status_line_enabled) {
@@ -437,20 +443,6 @@ public:
                 render_font_glyph(surface, row, col, ' ');
             }
         }
-
-        size_t cursor_row, cursor_col;
-
-        if (this->cursor_register >= this->top_of_screen_address) {
-            size_t cursor_screen_address = this->cursor_register - this->top_of_screen_address;
-            cursor_row = cursor_screen_address / 80;
-            cursor_col = cursor_screen_address % 80;
-        } else {
-            size_t cursor_screen_address = this->cursor_register + this->video_memory.size() - this->top_of_screen_address;
-            cursor_row = cursor_screen_address / 80;
-            cursor_col = cursor_screen_address % 80;
-        }
-
-        render_cursor(surface, cursor_row, cursor_col);
 
         SDL_UnlockTexture(screen);
     }
