@@ -4,8 +4,7 @@
 #include <array>
 #include <cstdint>
 #include <string>
-
-#include <fmt/format.h>
+#include <format>
 
 #ifdef USE_SDL
 #include "crt9028_font.h"
@@ -293,9 +292,9 @@ public:
 
             if ((offset % 80) == 0) {
                 if (render_border) {
-                    screen += fmt::format("\033[{}H|", (offset / 80) + 2);
+                    screen += std::format("\033[{}H|", (offset / 80) + 2);
                 } else {
-                    screen += fmt::format("\033[{}H", (offset / 80) + 1);
+                    screen += std::format("\033[{}H", (offset / 80) + 1);
                 }
             }
             screen += determine_character(this->video_memory[address]);
@@ -336,9 +335,9 @@ public:
         size_t col = cursor_offset % 80;
 
         if (render_border) {
-            screen += fmt::format("\033[{};{}H", row+2, col+2);
+            screen += std::format("\033[{};{}H", row+2, col+2);
         } else {
-            screen += fmt::format("\033[{};{}H", row+1, col+1);
+            screen += std::format("\033[{};{}H", row+1, col+1);
         }
         return screen;
     };

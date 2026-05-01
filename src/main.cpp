@@ -7,8 +7,7 @@
 #include <chrono>
 #include <thread>
 #include <string>
-
-#include <fmt/format.h>
+#include <format>
 
 #include <Z80.h>
 
@@ -18,7 +17,14 @@
 
 #include "crt9028.h"
 #include "wd2793.h"
+#ifdef USE_PTY
 #include "terminal.h"
+#endif
+
+#ifdef __EMSCRIPTEN__
+#include <functional>
+#include <emscripten.h>
+#endif
 
 class MachineContext {
 public:
@@ -119,7 +125,7 @@ public:
             return machine->disk.read_data_register();
         }
 
-        throw std::runtime_error(fmt::format("Unknown port: in {:02x}", address & 0xff));
+        throw std::runtime_error(std::format("Unknown port: in {:02x}", address & 0xff));
     };
 
     static void write_io(void* context, uint16_t address, uint8_t value) {
@@ -168,20 +174,20 @@ public:
             return;
         }
 
-        throw std::runtime_error(fmt::format("Unknown port: out {:02x} <= {:02x}", address & 0xff, value));
+        throw std::runtime_error(std::format("Unknown port: out {:02x} <= {:02x}", address & 0xff, value));
     };
 
-    size_t step(void) {
-        size_t cycles = z80_run(&this->cpu, 256);
+    size_t step(size_t cycles = 256) {
+        size_t run_cycles = z80_run(&this->cpu, cycles);
 
-        return cycles;
+        return run_cycles;
     };
 
     void load_ram_image(const std::string& file_name) {
         std::ifstream fid;
         fid.open(file_name,std::ios::in);
         if (!fid) {
-            throw std::runtime_error(fmt::format("could not open RAM image file {}", file_name));
+            throw std::runtime_error(std::format("could not open RAM image file {}", file_name));
         }
 
         fid.seekg(0, std::ios::end);
@@ -198,7 +204,7 @@ public:
         std::ifstream fid;
         fid.open(file_name,std::ios::in);
         if (!fid) {
-            throw std::runtime_error(fmt::format("could not open ROM image file {}", file_name));
+            throw std::runtime_error(std::format("could not open ROM image file {}", file_name));
         }
 
         fid.seekg(0, std::ios::end);
@@ -295,11 +301,12 @@ private:
     char keyboard_char{};
 };
 
+#ifdef ENABLE_CLI
 const std::string poll_input() {
     int bytes_available;
 
     if (ioctl(0, FIONREAD, &bytes_available) < 0) {
-        throw std::runtime_error(fmt::format("ioctl: {}", strerror(errno)));
+        throw std::runtime_error(std::format("ioctl: {}", strerror(errno)));
     }
 
     if (bytes_available > 0) {
@@ -311,69 +318,61 @@ const std::string poll_input() {
 
     return std::string{};
 }
-
-int main() {
-    Terminal pty;
-
-    fmt::print("Terminal is at {}\n", pty.get_pty_name());
-
-    MachineContext machine;
-
-    try {
-        machine.load_rom_image("rom.bin");
-    } catch (const std::exception& e) {
-        fmt::print(stderr, "Error: failure loading ROM image: {}\n", e.what());
-        return 1;
-    }
-
-    std::string disk_file_name("disk.bin");
-    try {
-        machine.load_disk_image(disk_file_name);
-    } catch (const std::exception& e) {
-        fmt::print(stderr, "Warning: failure loading default disk image: {}\n", e.what());
-    }
-
-    bool quit = false;
-    size_t pty_cycles_since_update{};
-    size_t cycles_since_start{};
-
-#if USE_SDL
-    size_t sdl_cycles_since_update{};
-
-    SDL_Window* sdl_window = SDL_CreateWindow(
-        "UCSD Microcomputer Emulator",
-        SDL_WINDOWPOS_UNDEFINED,
-        SDL_WINDOWPOS_UNDEFINED,
-        1000, 750,
-        SDL_WINDOW_SHOWN | SDL_WINDOW_RESIZABLE
-    );
-    SDL_Renderer* sdl_renderer = SDL_CreateRenderer(sdl_window, -1, SDL_RENDERER_ACCELERATED);
-
-    SDL_Texture* texture = SDL_CreateTexture(sdl_renderer, SDL_PIXELFORMAT_RGBA8888, SDL_TEXTUREACCESS_STREAMING, 560, 1250);
-    SDL_SetTextureScaleMode(texture, SDL_ScaleModeBest);
-
-    SDL_StartTextInput();
 #endif
 
-    const auto start = std::chrono::steady_clock::now();
+class Emulator {
+public:
+    Emulator() : rom_file_name("rom.bin"), disk_file_name{"disk.bin"} {
+#ifdef USE_PTY
+        std::cout << std::format("Terminal is at {}\n", pty.get_pty_name());
+#endif
 
-    fmt::print("> ");
-    std::flush(std::cout);
+        this->machine.load_rom_image(this->rom_file_name);
 
-    while (!quit) {
+        try {
+            this->machine.load_disk_image(this->disk_file_name);
+        } catch (const std::exception& e) {
+            std::cerr << std::format("Warning: failure loading default disk image: {}\n", e.what());
+        }
+
+#if USE_SDL
+        this->sdl_window = SDL_CreateWindow(
+            "UCSD Microcomputer Emulator",
+            SDL_WINDOWPOS_UNDEFINED,
+            SDL_WINDOWPOS_UNDEFINED,
+            1000, 750,
+            SDL_WINDOW_SHOWN | SDL_WINDOW_RESIZABLE
+        );
+        this->sdl_renderer = SDL_CreateRenderer(this->sdl_window, -1, SDL_RENDERER_ACCELERATED);
+
+        this->sdl_texture = SDL_CreateTexture(this->sdl_renderer, SDL_PIXELFORMAT_RGBA8888, SDL_TEXTUREACCESS_STREAMING, 560, 1250);
+        SDL_SetTextureScaleMode(this->sdl_texture, SDL_ScaleModeBest);
+
+        SDL_StartTextInput();
+#endif
+
+#ifdef ENABLE_CLI
+        std::cout << "> ";
+        std::flush(std::cout);
+#endif
+
+        this->start_time = std::chrono::steady_clock::now();
+    }
+
+    bool loop(void) {
+#ifdef ENABLE_CLI
         // interactive
         std::string input = poll_input();
         if (input.size() > 0) {
             if (input == "help" || input == "?") {
-                fmt::print("Available commands:\n");
-                fmt::print("  help, ?: Show this help message\n");
-                fmt::print("  exit, quit: Exit the emulator\n");
-                fmt::print("  save_disk [file_name]: Save disk image to file (default: {})\n", disk_file_name);
-                fmt::print("  load_disk [file_name]: Load disk image from file (default: {})\n", disk_file_name);
-                fmt::print("  reset: Reset the system\n");
+                std::cout << "Available commands:\n";
+                std::cout << "  help, ?: Show this help message\n";
+                std::cout << "  exit, quit: Exit the emulator\n";
+                std::cout << "  save_disk [file_name]: Save disk image to file (default: " << this->disk_file_name << ")\n";
+                std::cout << "  load_disk [file_name]: Load disk image from file (default: " << this->disk_file_name << ")\n";
+                std::cout << "  reset: Reset the system\n";
             } else if (input == "exit" || input == "quit") {
-                quit = true;
-                continue;
+                return false;
             } else if (input.compare(0, 9, "save_disk") == 0) {
                 std::string arg;
                 if (input.size() >= 10) {
@@ -385,9 +384,9 @@ int main() {
                     } else {
                         machine.save_disk_image(disk_file_name);
                     }
-                    fmt::print("Saved disk image\n");
+                    std::cout << "Saved disk image\n";
                 } catch (const std::exception& e) {
-                    fmt::print(stderr, "Warning: failure saving disk image: {}\n", e.what());
+                    std::cerr << std::format("Warning: failure saving disk image: {}\n", e.what());
                 }
             } else if (input.compare(0, 9, "load_disk") == 0) {
                 std::string arg;
@@ -400,76 +399,117 @@ int main() {
                     } else {
                         machine.load_disk_image(disk_file_name);
                     }
-                    fmt::print("Loaded disk image\n");
+                    std::cout << "Loaded disk image\n";
                 } catch (const std::exception& e) {
-                    fmt::print(stderr, "Warning: failure loading disk image: {}\n", e.what());
+                    std::cerr << std::format("Warning: failure loading disk image: {}\n", e.what());
                 }
             } else if (input.compare(0, 5, "reset") == 0) {
-                fmt::print("Resetting system\n");
+                std::cout << "Resetting system\n";
                 machine.reset();
             } else {
-                fmt::print("Unknown command\n");
+                std::cout << "Unknown command\n";
             }
 
             // show prompt again after command
-            fmt::print("> ");
+            std::cout << "> ";
             std::flush(std::cout);
         }
+#endif
 
-        size_t cycles = machine.step();
-        cycles_since_start += cycles;
+#ifdef USE_PTY
+        if (this->pty.is_pty_attached()) {
+            this->pty.write_output(this->machine.render_screen_vt100(true));
 
-        std::this_thread::sleep_until(
-            start + std::chrono::microseconds(cycles_since_start / 4)
-        );
-
-        pty_cycles_since_update += cycles;
-
-        if (pty.is_pty_attached()) {
-            if (pty_cycles_since_update >= 80000) {
-                pty_cycles_since_update = 0;
-                pty.write_output(machine.render_screen_vt100(true));
-            }
-
-            machine.keyboard_input(pty.read_input());
+            this->machine.keyboard_input(this->pty.read_input());
         }
+#endif
 
 #ifdef USE_SDL
-        sdl_cycles_since_update += cycles;
+        this->machine.render_screen_sdl(this->sdl_texture);
 
-        if (sdl_cycles_since_update >= 80000) {
-            sdl_cycles_since_update = 0;
-            machine.render_screen_sdl(texture);
-
-            SDL_RenderClear(sdl_renderer);
-            SDL_RenderCopyF(sdl_renderer, texture, nullptr, nullptr);
-            SDL_RenderPresent(sdl_renderer);
-        }
+        SDL_RenderClear(this->sdl_renderer);
+        SDL_RenderCopyF(this->sdl_renderer, this->sdl_texture, nullptr, nullptr);
+        SDL_RenderPresent(this->sdl_renderer);
 
         SDL_Event sdl_event;
         while (SDL_PollEvent(&sdl_event)) {
             if (sdl_event.type == SDL_QUIT) {
-                quit = true;
+                return false;
             }
             if (sdl_event.type == SDL_TEXTINPUT) {
-                machine.keyboard_input(sdl_event.text.text);
+                this->machine.keyboard_input(sdl_event.text.text);
             }
             if (sdl_event.type == SDL_KEYDOWN) {
                 if (sdl_event.key.keysym.sym == SDLK_RETURN) {
-                    machine.keyboard_input_char(13);
+                    this->machine.keyboard_input_char(13);
                 }
 
                 if (sdl_event.key.keysym.sym == SDLK_BACKSPACE) {
-                    machine.keyboard_input_char(127);
+                    this->machine.keyboard_input_char(127);
                 }
 
                 if (sdl_event.key.keysym.sym == SDLK_ESCAPE) {
-                    machine.keyboard_input_char(27);
+                    this->machine.keyboard_input_char(27);
                 }
             }
         }
 #endif
+
+        int64_t expected_cycles_since_start = std::chrono::duration_cast<std::chrono::microseconds>(std::chrono::steady_clock::now() - start_time).count() * 4;
+        int64_t cycles = expected_cycles_since_start - this->cycles_since_start;
+
+        if (cycles > 0) {
+            this->cycles_since_start += this->machine.step(cycles);
+        } else {
+            // we're running ahead of expected cycles, sleep a bit to avoid busy loop
+            std::this_thread::sleep_for(std::chrono::milliseconds(1));
+        }
+        return true;
     }
+
+private:
+    MachineContext machine;
+    int64_t cycles_since_start{};
+    std::chrono::time_point<std::chrono::steady_clock> start_time;
+    std::string disk_file_name;
+    std::string rom_file_name;
+
+#ifdef USE_PTY
+    Terminal pty;
+#endif
+
+#ifdef USE_SDL
+    SDL_Window* sdl_window;
+    SDL_Renderer* sdl_renderer;
+    SDL_Texture* sdl_texture;
+#endif
+};
+
+#if __EMSCRIPTEN__
+std::function<void()> main_loop_lambda;
+void main_loop() {
+    main_loop_lambda();
+}
+#endif
+
+int main() {
+#ifdef USE_SDL
+    SDL_Init(SDL_INIT_VIDEO | SDL_INIT_EVENTS);
+#endif
+
+    bool quit = false;
+    Emulator emulator;
+
+#ifdef __EMSCRIPTEN__
+    main_loop_lambda = [&]() {
+        emulator.loop();
+    };
+    emscripten_set_main_loop(main_loop, 0, true);
+#else
+    while (!quit) {
+        quit = !emulator.loop();
+    }
+#endif
 
 #ifdef USE_SDL
     SDL_StopTextInput();

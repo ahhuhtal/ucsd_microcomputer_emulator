@@ -1,0 +1,6 @@
+[submodule "depends/Zeta"]
+	path = depends/Zeta
+	url = https://github.com/redcode/Zeta.git
+[submodule "depends/Z80"]
+	path = depends/Z80
+	url = https://github.com/redcode/Z80.git

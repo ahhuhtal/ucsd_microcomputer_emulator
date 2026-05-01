@@ -9,8 +9,7 @@
 
 #include <stdexcept>
 #include <vector>
-
-#include <fmt/format.h>
+#include <format>
 
 class Terminal {
 public:
@@ -20,7 +19,7 @@ public:
         auto e = openpty(&this->fd, &clientfd, nullptr, nullptr, nullptr);
 
         if (e < 0) {
-            throw std::runtime_error(fmt::format("openpty: {}\n", strerror(errno)));
+            throw std::runtime_error(std::format("openpty: {}\n", strerror(errno)));
         }
 
         this->ptyname = std::string(ttyname(clientfd));
@@ -53,7 +52,7 @@ public:
         int bytes_available;
 
         if (ioctl(this->fd, FIONREAD, &bytes_available) < 0) {
-            throw std::runtime_error(fmt::format("ioctl: {}", strerror(errno)));
+            throw std::runtime_error(std::format("ioctl: {}", strerror(errno)));
         }
 
         return bytes_available;
@@ -65,7 +64,7 @@ public:
         std::vector<char> data(bytes);
         int e = read(this->fd, data.data(), bytes);
         if (e < 0) {
-            throw std::runtime_error(fmt::format("read: {}", strerror(errno)));
+            throw std::runtime_error(std::format("read: {}", strerror(errno)));
         }
 
         std::string input_string(data.data(), data.size());
@@ -80,7 +79,7 @@ public:
             int e = write(this->fd, output.data(), output.size());
 
             if (e < 0) {
-                throw std::runtime_error(fmt::format("write: {}", strerror(errno)));
+                throw std::runtime_error(std::format("write: {}", strerror(errno)));
             }
         }
     };
@@ -97,7 +96,7 @@ private:
 
         int e = poll(&fds, 1, 0);
         if (e < 0) {
-            throw std::runtime_error(fmt::format("poll: {}", strerror(errno)));
+            throw std::runtime_error(std::format("poll: {}", strerror(errno)));
         }
 
         return fds.revents;

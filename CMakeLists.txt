@@ -1,23 +1,53 @@
 cmake_minimum_required(VERSION 3.5)
 project(ucsd_microcomputer_emulator VERSION 1.0 LANGUAGES CXX)
 
-add_executable(ucsd_emu src/main.cpp)
+if (EMSCRIPTEN)
+    add_compile_options(-O3 -sNO_DISABLE_EXCEPTION_CATCHING)
+    add_link_options(-sSTACK_SIZE=16777216)
+    add_link_options("SHELL:--embed-file ${CMAKE_CURRENT_BINARY_DIR}/rom.bin@rom.bin")
+    add_link_options("SHELL:--embed-file ${CMAKE_CURRENT_BINARY_DIR}/disk.bin@disk.bin")
+    add_link_options(-sNO_DISABLE_EXCEPTION_CATCHING)
+    add_link_options("SHELL:--shell-file ${CMAKE_CURRENT_SOURCE_DIR}/emscripten/shell.html")
+else()
+    add_compile_options(-O3)
+endif()
 
-find_package(fmt)
-find_package(Z80 REQUIRED Shared)
-target_link_libraries(ucsd_emu Z80 fmt::fmt)
+add_executable(ucsd_emu src/main.cpp)
+set_property(TARGET ucsd_emu PROPERTY CXX_STANDARD 20)
+
+if (EMSCRIPTEN)
+    find_library(LIBZ80 NAMES libZ80.a)
+    target_link_libraries(ucsd_emu ${LIBZ80})
+    set(CMAKE_EXECUTABLE_SUFFIX ".html")
+else()
+    target_link_libraries(ucsd_emu Z80)
+endif()
 
 set(MONITOR "ZMON" CACHE STRING "Select monitor to build (ZMON or ALTMON)")
 
 find_program(ZASM zasm)
 find_program(PYTHON python3)
 
-option(USE_SDL "Use SDL for graphics and input" OFF)
+option(USE_SDL "Use SDL for graphics and input" ON)
+option(USE_PTY "Use a pseudo-terminal for terminal I/O" ON)
+option(ENABLE_CLI "Enable command-line interface for commanding emulator" ON)
+
+if (NOT USE_SDL AND NOT USE_PTY)
+    message(FATAL_ERROR "At least one of USE_SDL or USE_PTY must be enabled")
+endif()
+
+if (USE_PTY)
+    add_compile_definitions(USE_PTY)
+endif()
 
 if(USE_SDL)
     find_package(SDL2 REQUIRED)
     target_link_libraries(ucsd_emu SDL2::SDL2)
     add_compile_definitions(USE_SDL)
+endif()
+
+if(ENABLE_CLI)
+    add_compile_definitions(ENABLE_CLI)
 endif()
 
 if(NOT ZASM)
@@ -89,6 +119,12 @@ add_dependencies(ucsd_emu rom disk)
 # Install into a deploy directory at the source root by default
 set(CMAKE_INSTALL_PREFIX ${CMAKE_CURRENT_SOURCE_DIR})
 
+if (EMSCRIPTEN)
+install(
+    FILES ${CMAKE_CURRENT_BINARY_DIR}/ucsd_emu.html ${CMAKE_CURRENT_BINARY_DIR}/ucsd_emu.js ${CMAKE_CURRENT_BINARY_DIR}/ucsd_emu.wasm
+    DESTINATION deploy
+)
+else()
 install(
     TARGETS ucsd_emu RUNTIME
     DESTINATION deploy
@@ -97,3 +133,4 @@ install(
     FILES ${CMAKE_CURRENT_BINARY_DIR}/rom.bin ${CMAKE_CURRENT_BINARY_DIR}/disk.bin ${CMAKE_CURRENT_BINARY_DIR}/disk_boot_tracks.bin
     DESTINATION deploy
 )
+endif()

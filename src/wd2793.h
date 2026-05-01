@@ -3,7 +3,7 @@
 
 #include <cstdint>
 #include <stdexcept>
-#include <fmt/format.h>
+#include <format>
 
 class WD2793 {
 public:
@@ -40,8 +40,10 @@ public:
                     return 0x10;
                 }
             } break;
+            default: {
+                return 0x00;
+            } break;
         }
-        return 0x00;
     }
 
     void write_command_register(uint8_t value) {
@@ -101,11 +103,11 @@ public:
                 if (value & 0x10) {
                     this->track_register--;
                 }
-                last_command = Command::StepIn;
+                last_command = Command::StepOut;
                 return;
             }
 
-            throw std::runtime_error(fmt::format("Unknown WD2793 type I command {:02x}", value));
+            throw std::runtime_error(std::format("Unknown WD2793 type I command {:02x}", value));
         }
 
         // Is the command a type II?
@@ -114,7 +116,7 @@ public:
             if ((value & 0xe0) == 0x80) {
                 // TODO: support multiple records
                 if (value & 0x10) {
-                    throw std::runtime_error(fmt::format("WD2793 multiple records not supported: cmd = {:02x}", value));
+                    throw std::runtime_error(std::format("WD2793 multiple records not supported: cmd = {:02x}", value));
                 }
 
                 // TODO: check disk side
@@ -127,7 +129,7 @@ public:
             if ((value & 0xe0) == 0xa0) {
                 // TODO: support multiple records
                 if (value & 0x10) {
-                    throw std::runtime_error(fmt::format("WD2793 multiple records not supported: cmd = {:02x}", value));
+                    throw std::runtime_error(std::format("WD2793 multiple records not supported: cmd = {:02x}", value));
                 }
 
                 // TODO: check disk side
@@ -136,7 +138,7 @@ public:
                 return;
             }
 
-            throw std::runtime_error(fmt::format("Unknown WD2793 type II command {:02x}", value));
+            throw std::runtime_error(std::format("Unknown WD2793 type II command {:02x}", value));
         }
 
         // Is the command a force interrupt?
@@ -145,7 +147,7 @@ public:
             return;
         }
 
-        throw std::runtime_error(fmt::format("Unknown WD2793 command {:02x}", value));
+        throw std::runtime_error(std::format("Unknown WD2793 command {:02x}", value));
     }
 
     uint8_t read_sector_register() {
@@ -187,7 +189,7 @@ public:
         std::ifstream fid;
         fid.open(file_name,std::ios::in);
         if (!fid) {
-            throw std::runtime_error(fmt::format("WD2792 could not open disk image file {}", file_name));
+            throw std::runtime_error(std::format("WD2792 could not open disk image file {}", file_name));
         }
 
         fid.seekg(0, std::ios::end);
@@ -204,7 +206,7 @@ public:
         std::ofstream fid;
         fid.open(file_name,std::ios::out);
         if (!fid) {
-            throw std::runtime_error(fmt::format("WD2792 could not open disk image {}", file_name));
+            throw std::runtime_error(std::format("WD2792 could not open disk image {}", file_name));
         }
 
         fid.write(reinterpret_cast<char*>(this->disk_data.data()),this->disk_data.size());
