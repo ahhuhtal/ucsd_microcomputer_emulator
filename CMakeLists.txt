@@ -25,7 +25,7 @@ endif()
 
 set(MONITOR "ZMON" CACHE STRING "Select monitor to build (ZMON or ALTMON)")
 
-find_program(ZASM zasm)
+find_program(ZASM zasm HINTS ${CMAKE_CURRENT_SOURCE_DIR}/depends/zasm)
 find_program(PYTHON python3)
 
 option(USE_SDL "Use SDL for graphics and input" ON)

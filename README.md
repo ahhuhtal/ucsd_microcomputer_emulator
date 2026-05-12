@@ -8,50 +8,54 @@ My available documentation does not have a consistent name for the machine. The 
 
 ## Prerequisites
 
-- A C/C++ compiler
+- A C/C++ compiler which supports C++20 (specifically `std::format`)
 
 - cmake
 
 - libZ80 (https://zxe.io/software/Z80)
 
-- libfmt (https://github.com/fmtlib/fmt)
-
 - zasm (https://github.com/Megatokio/zasm)
+
+- SDL (optional)
+
+- screen (optional)
 
 - python3
 
-- screen
+- cpmtools
 
-- git
+Note: `Z80` and its dependency `Zeta` as well as `zasm` are included as submodules of this repository, which can be used for building them.
 
 ### Ubuntu specific instructions
 
 #### Install the repository for libZ80
-```
+```sh
 curl -L https://zxe.io/scripts/add-zxe-apt-repo.sh | sudo sh
 sudo apt update
 ```
 
 #### Install required packages
 
-```
-sudo apt install build-essential cmake libfmt-dev cpmtools libz80-dev screen git
+```sh
+sudo apt install build-essential cmake cpmtools libz80-dev libsdl2-dev screen
 ```
 
 #### Build zasm
 
-In a suitable directory:
+In the root of this repository:
 
-```
-git clone https://github.com/Megatokio/zasm.git
-cd zasm
+```sh
+git submodule update --init --recursive
+cd depends/zasm
 make
 ```
-This results in the executable binary `zasm`. The emulator build system will automatically find the `zasm` binary if it is placed in a directory which is in the `PATH`. Alternatively, you can specify the location of the binary when configuring the emulator build system.
+This results in the executable binary `zasm`. The emulator build system will automatically find the `zasm` binary if it is in `depends/zasm` or placed in a directory which is in the `PATH`. Alternatively, you can specify the location of the binary when configuring the emulator build system.
 
 ## Building the emulator
 
-```
+In the root of this repository:
+
+```sh
 mkdir build
 cd build
 cmake ..
@@ -59,16 +63,46 @@ make
 make install
 ```
 
-This will build the emulator in a the subdirectory `build`. The generated executable binary is called `ucsd_emu`.
+This will build the emulator in a the subdirectory `build`, and install it in the `deploy` subdirectory. The generated executable binary is called `ucsd_emu`.
 
 ### Build options
+
+#### SDL
+
+If you don't want to use the SDL based input/output method, you can disable it by specifying the option `USE_SDL=OFF`. You'll want to disable this if you don't have SDL on your system.
+
+Example (issue in the build directory):
+```sh
+cmake -DUSE_SDL=OFF
+make
+```
+
+#### PTY
+
+If you don't want to use the PTY based input/output method, you can disable it by specifying the option `USE_PTY=OFF`. You'll might want to disable this if you're not running Linux.
+
+Example (issue in the build directory):
+```sh
+cmake -DUSE_PTY=OFF
+make
+```
+
+#### CLI
+
+If you don't want to enable the interactive command line of the emulator (allowing switching disk images, resetting, e.g.), you can disable it by specifying the option `ENABLE_CLI=OFF`. You'll might want to disable this if you're not running Linux.
+
+Example (issue in the build directory):
+```sh
+cmake -DENABLE_CLI=OFF
+make
+```
 
 #### Monitor
 
 The option `MONITOR` can take the values of `ZMON` or `ALTMON`, to switch between the original `ZMON` monitor as listed in the documentation. `ALTMON` is a new version, which has somewhat enchanced terminal emulation. The default is to use `ZMON`.
 
 Example (issue in the build directory):
-```
+```sh
 cmake -DMONITOR=ALTMON ..
 make
 ```
@@ -78,10 +112,30 @@ make
 The option `ZASM` allows specifying the location of the Zasm assemler binary, if it was not placed to a directory in the `PATH`.
 
 Example (issue in the build directory):
-```
+```sh
 cmake -DZASM=~/zasm/zasm ..
 make
 ```
+
+### Emscripten
+
+The emulator also features preliminary [Emscripten](https://emscripten.org/) support. This allows the emulator to be compiled into [WebAssembly](https://webassembly.org/) byte code and be run in a web browser.
+
+#### Very cursory instructions
+
+Install the Emscripted SDK and activate it.
+
+In the root of this repository:
+
+```sh
+mkdir embuild
+cd embuild
+emcmake cmake ..
+emmake make
+emmake make install
+```
+
+This will build the emulator in a the subdirectory `embuild`, and install it in the `deploy` subdirectory. This generates `ucsd_emu.wasm`, `ucsd_emu.js` and `ucsd_emu.html`. Note that browsers will not load executables from the local file system. The files must be properly served for some reason.
 
 ## Emulator usage
 
@@ -92,13 +146,17 @@ Terminal is at /dev/pts/4
 ```
 This is a command prompt, which allows giving some commands to the emulator. Issue the command `help` to see a list of commands. The emulator is now running.
 
-To interact with the actual terminal of the machine, first open a new terminal on your computer. The terminal should be able to show at least 82 x 27 characters. You can then attach to the terminal device using the program `screen`:
+If you have compiled the emulator with SDL support (default), you will also see a new graphical window open which emulates the output of the CRT9028 as well as the keyboard input of the machine.
+
+![Screenshot of system terminal after boot using SDL](screenshot_sdl.png)
+
+Altarnatively, if you only have PTY output enabled, then to interact with the actual terminal of the machine, you must first open a new terminal on your computer. The terminal should be able to show at least 82 x 27 characters. You can then attach to the terminal device using the program `screen`:
 ```
 screen /dev/pts/XXX
 ```
 where XXX is the PTY device indicated by the emulator.
 
-![Screenshot of system terminal after boot](screenshot_booted.png)
+![Screenshot of system terminal after boot using PTY](screenshot_pty.png)
 
 ## Machine basics
 
