@@ -31,6 +31,11 @@ find_program(PYTHON python3)
 option(USE_SDL "Use SDL for graphics and input" ON)
 option(USE_PTY "Use a pseudo-terminal for terminal I/O" ON)
 option(ENABLE_CLI "Enable command-line interface for commanding emulator" ON)
+if (EMSCRIPTEN)
+    # PTY and CLI are not supported in Emscripten build
+    set(USE_PTY OFF)
+    set(ENABLE_CLI OFF)
+endif()
 
 if (NOT USE_SDL AND NOT USE_PTY)
     message(FATAL_ERROR "At least one of USE_SDL or USE_PTY must be enabled")

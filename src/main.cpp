@@ -24,6 +24,7 @@
 #ifdef __EMSCRIPTEN__
 #include <functional>
 #include <emscripten.h>
+#include <emscripten/html5.h>
 #endif
 
 class MachineContext {
@@ -320,6 +321,32 @@ const std::string poll_input() {
 }
 #endif
 
+
+#if __EMSCRIPTEN__
+std::function<void()> main_loop_lambda;
+void main_loop_callback() {
+    main_loop_lambda();
+}
+
+std::function<void()> reset_lambda;
+bool reset_callback(int eventType, const EmscriptenMouseEvent* mouseEvent, void* userData) {
+    reset_lambda();
+    return true;
+}
+
+std::function<void(std::string)> load_disk_lambda;
+bool load_disk_callback(int eventType, const EmscriptenMouseEvent* changeEvent, void* userData) {
+    // TODO
+    return false;
+}
+
+std::function<void(std::string)> save_disk_lambda;
+bool save_disk_callback(int eventType, const EmscriptenMouseEvent* changeEvent, void* userData) {
+    // TODO
+    return false;
+}
+#endif
+
 class Emulator {
 public:
     Emulator() : rom_file_name("rom.bin"), disk_file_name{"disk.bin"} {
@@ -357,11 +384,17 @@ public:
 #endif
 
         this->start_time = std::chrono::steady_clock::now();
+
+#ifdef __EMSCRIPTEN__
+        reset_lambda = [&]() {
+            this->machine.reset();
+        };
+        emscripten_set_click_callback("#reset", NULL, true, reset_callback);
+#endif
     }
 
-    bool loop(void) {
 #ifdef ENABLE_CLI
-        // interactive
+    bool handle_cli(void) {
         std::string input = poll_input();
         if (input.size() > 0) {
             if (input == "help" || input == "?") {
@@ -413,6 +446,16 @@ public:
             // show prompt again after command
             std::cout << "> ";
             std::flush(std::cout);
+        }
+
+        return true;
+    }
+#endif
+
+    bool loop(void) {
+#ifdef ENABLE_CLI
+        if (!handle_cli()) {
+            return false;
         }
 #endif
 
@@ -485,13 +528,6 @@ private:
 #endif
 };
 
-#if __EMSCRIPTEN__
-std::function<void()> main_loop_lambda;
-void main_loop() {
-    main_loop_lambda();
-}
-#endif
-
 int main() {
 #ifdef USE_SDL
     SDL_Init(SDL_INIT_VIDEO | SDL_INIT_EVENTS);
@@ -504,7 +540,7 @@ int main() {
     main_loop_lambda = [&]() {
         emulator.loop();
     };
-    emscripten_set_main_loop(main_loop, 0, true);
+    emscripten_set_main_loop(main_loop_callback, 0, true);
 #else
     while (!quit) {
         quit = !emulator.loop();
