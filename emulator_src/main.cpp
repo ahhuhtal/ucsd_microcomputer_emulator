@@ -349,7 +349,7 @@ bool save_disk_callback(int eventType, const EmscriptenMouseEvent* changeEvent, 
 
 class Emulator {
 public:
-    Emulator() : rom_file_name("rom.bin"), disk_file_name{"disk.bin"} {
+    Emulator() : rom_file_name("zmon.bin"), disk_file_name{"disk.bin"} {
 #ifdef USE_PTY
         std::cout << std::format("Terminal is at {}\n", pty.get_pty_name());
 #endif
@@ -403,9 +403,8 @@ public:
                 std::cout << "  exit, quit: Exit the emulator\n";
                 std::cout << "  save_disk [file_name]: Save disk image to file (default: " << this->disk_file_name << ")\n";
                 std::cout << "  load_disk [file_name]: Load disk image from file (default: " << this->disk_file_name << ")\n";
+                std::cout << "  load_rom [file_name]: Load ROM image from file (default: " << this->rom_file_name << "). Next reset will use this ROM.\n";
                 std::cout << "  reset: Reset the system\n";
-            } else if (input == "exit" || input == "quit") {
-                return false;
             } else if (input.compare(0, 9, "save_disk") == 0) {
                 std::string arg;
                 if (input.size() >= 10) {
@@ -415,7 +414,7 @@ public:
                     if (arg.size() > 0) {
                         machine.save_disk_image(arg);
                     } else {
-                        machine.save_disk_image(disk_file_name);
+                        machine.save_disk_image(this->disk_file_name);
                     }
                     std::cout << "Saved disk image\n";
                 } catch (const std::exception& e) {
@@ -429,16 +428,35 @@ public:
                 try {
                     if (arg.size() > 0) {
                         machine.load_disk_image(arg);
+                        this->disk_file_name = arg;
                     } else {
-                        machine.load_disk_image(disk_file_name);
+                        machine.load_disk_image(this->disk_file_name);
                     }
                     std::cout << "Loaded disk image\n";
                 } catch (const std::exception& e) {
                     std::cerr << std::format("Warning: failure loading disk image: {}\n", e.what());
                 }
+            } else if (input.compare(0, 8, "load_rom") == 0) {
+                std::string arg;
+                if (input.size() >= 9) {
+                    arg = input.substr(9);
+                }
+                try {
+                    if (arg.size() > 0) {
+                        machine.load_rom_image(arg);
+                        this->rom_file_name = arg;
+                    } else {
+                        machine.load_rom_image(this->rom_file_name);
+                    }
+                    std::cout << "Loaded ROM image\n";
+                } catch (const std::exception& e) {
+                    std::cerr << std::format("Warning: failure loading ROM image: {}\n", e.what());
+                }
             } else if (input.compare(0, 5, "reset") == 0) {
                 std::cout << "Resetting system\n";
                 machine.reset();
+            } else if (input == "exit" || input == "quit") {
+                return false;
             } else {
                 std::cout << "Unknown command\n";
             }

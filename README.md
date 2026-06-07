@@ -97,16 +97,6 @@ cmake -DENABLE_CLI=OFF
 make
 ```
 
-#### Monitor
-
-The option `MONITOR` can take the values of `ZMON` or `ALTMON`, to switch between the original `ZMON` monitor as listed in the documentation. `ALTMON` is a new version, which has somewhat enchanced terminal emulation. The default is to use `ZMON`.
-
-Example (issue in the build directory):
-```sh
-cmake -DMONITOR=ALTMON ..
-make
-```
-
 #### Zasm binary location
 
 The option `ZASM` allows specifying the location of the Zasm assemler binary, if it was not placed to a directory in the `PATH`.
@@ -139,7 +129,7 @@ This will build the emulator in a the subdirectory `embuild`, and install it in 
 
 ## Emulator usage
 
-Running `ucsd_emu` will load the ROM image `rom.bin` and disk image `disk.bin`, and start the emulation. This results in output similar to:
+Running `ucsd_emu` will load the ROM image `zmon.bin` and disk image `disk.bin`, and start the emulation. This results in output similar to:
 ```
 Terminal is at /dev/pts/4
 >
@@ -220,6 +210,10 @@ In addition to the `b` command to boot, the monitor supports at least the follow
 - `DM`: Display memory
     - Show memory contents between two addresses
     - Example: `DM f800 f8ff` <- display memory from F800h up to and including F8FFh
+
+## Alternate monitor
+
+The original ZMON ROM functionality has some quirks with the terminal emulation. An alternative ROM ALTMON is developed within this emulator project as `altmon.bin`. This is built as part of the emulator build process, and the CLI of the emulator allows switching the ROM image for `altmon.bin`. This ROM will then be taken into use after a reset of the machine through the CLI.
 
 ## Assembler
 

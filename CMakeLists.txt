@@ -4,7 +4,8 @@ project(ucsd_microcomputer_emulator VERSION 1.0 LANGUAGES CXX)
 if (EMSCRIPTEN)
     add_compile_options(-O3 -sNO_DISABLE_EXCEPTION_CATCHING)
     add_link_options(-sSTACK_SIZE=16777216)
-    add_link_options("SHELL:--embed-file ${CMAKE_CURRENT_BINARY_DIR}/rom.bin@rom.bin")
+    add_link_options("SHELL:--embed-file ${CMAKE_CURRENT_BINARY_DIR}/zmon.bin@zmon.bin")
+    add_link_options("SHELL:--embed-file ${CMAKE_CURRENT_BINARY_DIR}/altmon.bin@altmon.bin")
     add_link_options("SHELL:--embed-file ${CMAKE_CURRENT_BINARY_DIR}/disk.bin@disk.bin")
     add_link_options(-sNO_DISABLE_EXCEPTION_CATCHING)
     add_link_options("SHELL:--shell-file ${CMAKE_CURRENT_SOURCE_DIR}/emulator_src/emscripten/shell.html")
@@ -57,27 +58,35 @@ if(NOT ZASM)
     message(FATAL_ERROR "ZASM not found")
 endif()
 
-# source files for generating ROM
-if(MONITOR STREQUAL "ZMON")
-    configure_file(machine_src/asm/zmon.z80 machine_src/asm/monitor.z80 COPYONLY)
-elseif(MONITOR STREQUAL "ALTMON")
-    configure_file(machine_src/asm/altmon.z80 machine_src/asm/monitor.z80 COPYONLY)
-else()
-    message(FATAL_ERROR "Unknown monitor: ${MONITOR}")
-endif()
+# source files for generating ROM images (ZMON, ALTMON and BOOT)
+configure_file(machine_src/asm/zmon.z80 machine_src/asm/zmon.z80 COPYONLY)
+configure_file(machine_src/asm/altmon.z80 machine_src/asm/altmon.z80 COPYONLY)
 configure_file(machine_src/asm/boot.z80 machine_src/asm/boot.z80 COPYONLY)
 
-# Build ROM image. ROM is mapped at 0x0000, with a short BOOT routine at the beginning,
+# Build ROM images. ROM is mapped at 0x0000, with a short BOOT routine at the beginning,
 # followed by the monitor binary. The BOOT routine copies the monitor from 0x0010 to 0xF800.
+
+# ZMON
 add_custom_command(
-    OUTPUT rom.bin
-    COMMAND ${ZASM} -u --casefold machine_src/asm/monitor.z80
+    OUTPUT zmon.bin
+    COMMAND ${ZASM} -u --casefold machine_src/asm/zmon.z80
     COMMAND ${ZASM} -u machine_src/asm/boot.z80
-    COMMAND ${PYTHON} ${CMAKE_CURRENT_SOURCE_DIR}/tools/combine.py -v machine_src/asm/boot.rom:0x00 machine_src/asm/monitor.rom:0x10 rom.bin -t 0x800
-    DEPENDS ${CMAKE_CURRENT_SOURCE_DIR}/tools/combine.py machine_src/asm/monitor.z80 machine_src/asm/boot.z80
+    COMMAND ${PYTHON} ${CMAKE_CURRENT_SOURCE_DIR}/tools/combine.py -v machine_src/asm/boot.rom:0x00 machine_src/asm/zmon.rom:0x10 zmon.bin -t 0x800
+    DEPENDS ${CMAKE_CURRENT_SOURCE_DIR}/tools/combine.py machine_src/asm/zmon.z80 machine_src/asm/boot.z80
     COMMENT "Building ROM image"
 )
-add_custom_target(rom DEPENDS rom.bin)
+add_custom_target(zmon DEPENDS zmon.bin)
+
+# ALTMON
+add_custom_command(
+    OUTPUT altmon.bin
+    COMMAND ${ZASM} -u --casefold machine_src/asm/altmon.z80
+    COMMAND ${ZASM} -u machine_src/asm/boot.z80
+    COMMAND ${PYTHON} ${CMAKE_CURRENT_SOURCE_DIR}/tools/combine.py -v machine_src/asm/boot.rom:0x00 machine_src/asm/altmon.rom:0x10 altmon.bin -t 0x800
+    DEPENDS ${CMAKE_CURRENT_SOURCE_DIR}/tools/combine.py machine_src/asm/altmon.z80 machine_src/asm/boot.z80
+    COMMENT "Building ROM image"
+)
+add_custom_target(altmon DEPENDS altmon.bin)
 
 # Source files for combined CPM+ZBIOS image
 configure_file(machine_src/asm/zbios.z80 machine_src/asm/zbios.z80 COPYONLY)
@@ -117,7 +126,7 @@ add_custom_command(
     COMMENT "Building boot disk image"
 )
 add_custom_target(disk DEPENDS disk.bin)
-add_dependencies(ucsd_emu rom disk)
+add_dependencies(ucsd_emu zmon altmon disk)
 
 # Install into a deploy directory at the source root by default
 set(CMAKE_INSTALL_PREFIX ${CMAKE_CURRENT_SOURCE_DIR})
@@ -133,7 +142,7 @@ install(
     DESTINATION deploy
 )
 install(
-    FILES ${CMAKE_CURRENT_BINARY_DIR}/rom.bin ${CMAKE_CURRENT_BINARY_DIR}/disk.bin ${CMAKE_CURRENT_BINARY_DIR}/disk_boot_tracks.bin
+    FILES ${CMAKE_CURRENT_BINARY_DIR}/zmon.bin ${CMAKE_CURRENT_BINARY_DIR}/altmon.bin ${CMAKE_CURRENT_BINARY_DIR}/disk.bin ${CMAKE_CURRENT_BINARY_DIR}/disk_boot_tracks.bin
     DESTINATION deploy
 )
 endif()
