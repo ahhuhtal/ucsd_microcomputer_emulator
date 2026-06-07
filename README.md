@@ -46,10 +46,10 @@ In the root of this repository:
 
 ```sh
 git submodule update --init --recursive
-cd depends/zasm
+cd tools/zasm
 make
 ```
-This results in the executable binary `zasm`. The emulator build system will automatically find the `zasm` binary if it is in `depends/zasm` or placed in a directory which is in the `PATH`. Alternatively, you can specify the location of the binary when configuring the emulator build system.
+This results in the executable binary `zasm`. The emulator build system will automatically find the `zasm` binary if it is in `tools/zasm` or placed in a directory which is in the `PATH`. Alternatively, you can specify the location of the binary when configuring the emulator build system.
 
 ## Building the emulator
 

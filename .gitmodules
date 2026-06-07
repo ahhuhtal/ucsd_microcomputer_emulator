@@ -1,9 +1,9 @@
 [submodule "depends/Zeta"]
-	path = depends/Zeta
+	path = emulator_src/Zeta
 	url = https://github.com/redcode/Zeta.git
 [submodule "depends/Z80"]
-	path = depends/Z80
+	path = emulator_src/Z80
 	url = https://github.com/redcode/Z80.git
 [submodule "depends/zasm"]
-	path = depends/zasm
+	path = tools/zasm
 	url = https://github.com/Megatokio/zasm.git
