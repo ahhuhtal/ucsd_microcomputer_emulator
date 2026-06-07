@@ -118,6 +118,7 @@ Install the Emscripted SDK and activate it.
 In the root of this repository:
 
 ```sh
+git submodule update --init --recursive
 mkdir embuild
 cd embuild
 emcmake cmake ..

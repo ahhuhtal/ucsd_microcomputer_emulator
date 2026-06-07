@@ -25,6 +25,8 @@
 #include <functional>
 #include <emscripten.h>
 #include <emscripten/html5.h>
+
+#include "emscripten/emscripten-browser-file/emscripten_browser_file.h"
 #endif
 
 class MachineContext {
@@ -334,15 +336,37 @@ bool reset_callback(int eventType, const EmscriptenMouseEvent* mouseEvent, void*
     return true;
 }
 
-std::function<void(std::string)> load_disk_lambda;
+std::function<void()> load_disk_lambda;
 bool load_disk_callback(int eventType, const EmscriptenMouseEvent* changeEvent, void* userData) {
-    // TODO
+    load_disk_lambda();
     return false;
 }
 
-std::function<void(std::string)> save_disk_lambda;
+std::function<void(std::string_view& buffer)> load_disk_loaded_lambda;
+void load_disk_loaded_callback(std::string const &filename, std::string const &mime_type, std::string_view buffer, void *callback_data) {
+    if (mime_type != "application/octet-stream") {
+        std::cerr << std::format("Warning: unexpected MIME type for uploaded file: {}\n", mime_type);
+        return;
+    }
+
+    load_disk_loaded_lambda(buffer);
+}
+
+std::function<void()> save_disk_lambda;
 bool save_disk_callback(int eventType, const EmscriptenMouseEvent* changeEvent, void* userData) {
-    // TODO
+    save_disk_lambda();
+    return false;
+}
+
+std::function<void()> use_zmon_lambda;
+bool use_zmon_callback(int eventType, const EmscriptenMouseEvent* changeEvent, void* userData) {
+    use_zmon_lambda();
+    return false;
+}
+
+std::function<void()> use_altmon_lambda;
+bool use_altmon_callback(int eventType, const EmscriptenMouseEvent* changeEvent, void* userData) {
+    use_altmon_lambda();
     return false;
 }
 #endif
@@ -388,8 +412,70 @@ public:
 #ifdef __EMSCRIPTEN__
         reset_lambda = [&]() {
             this->machine.reset();
+            std::cout << "System reset.\n";
         };
         emscripten_set_click_callback("#reset", NULL, true, reset_callback);
+
+        save_disk_lambda = [&]() {
+            try {
+                this->machine.save_disk_image("exported_disk.bin");
+                std::string disk_data;
+                {
+                    std::ostringstream oss;
+                    std::ifstream fid("exported_disk.bin", std::ios::in | std::ios::binary);
+                    oss << fid.rdbuf();
+                    disk_data = oss.str();
+                }
+
+                // trigger download of disk image with name disk.bin
+                emscripten_browser_file::download("disk.bin", "application/octet-stream", disk_data);
+            } catch (const std::exception& e) {
+                std::cerr << std::format("Warning: failure saving disk image: {}\n", e.what());
+            }
+        };
+        emscripten_set_click_callback("#save_disk", NULL, true, save_disk_callback);
+
+        load_disk_loaded_lambda = [&](std::string_view& buffer) {
+            try {
+                // save uploaded file data to disk
+                std::ofstream fid("disk.bin", std::ios::out | std::ios::binary);
+                fid << buffer;
+                fid.close();
+
+                this->machine.load_disk_image("disk.bin");
+                this->disk_file_name = "disk.bin";
+                std::cout << "Disk image loaded.\n";
+            } catch (const std::exception& e) {
+                std::cerr << std::format("Warning: failure loading disk image: {}\n", e.what());
+            }
+        };
+
+        load_disk_lambda = [&]() {
+            emscripten_browser_file::upload("application/octet-stream", load_disk_loaded_callback);
+        };
+        emscripten_set_click_callback("#load_disk", NULL, true, load_disk_callback);
+
+        use_zmon_lambda = [&]() {
+            try {
+                this->machine.load_rom_image("zmon.bin");
+                this->rom_file_name = "zmon.bin";
+                std::cout << "ZMON ROM loaded.\n";
+            } catch (const std::exception& e) {
+                std::cerr << std::format("Warning: failure loading ZMON ROM image: {}\n", e.what());
+            }
+        };
+        emscripten_set_click_callback("#zmon", NULL, true, use_zmon_callback);
+
+        use_altmon_lambda = [&]() {
+            try {
+                this->machine.load_rom_image("altmon.bin");
+                this->rom_file_name = "altmon.bin";
+                std::cout << "ALTMON ROM loaded.\n";
+            } catch (const std::exception& e) {
+                std::cerr << std::format("Warning: failure loading ALTMON ROM image: {}\n", e.what());
+            }
+        };
+        emscripten_set_click_callback("#altmon", NULL, true, use_altmon_callback);
 #endif
     }
 

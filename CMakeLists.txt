@@ -3,7 +3,7 @@ project(ucsd_microcomputer_emulator VERSION 1.0 LANGUAGES CXX)
 
 if (EMSCRIPTEN)
     add_compile_options(-O3 -sNO_DISABLE_EXCEPTION_CATCHING)
-    add_link_options(-sSTACK_SIZE=16777216)
+    add_link_options(-sSTACK_SIZE=16777216 -sALLOW_MEMORY_GROWTH=1 -sEXPORTED_RUNTIME_METHODS=[ccall,HEAPU8] -sEXPORTED_FUNCTIONS=[_main,_malloc,_free])
     add_link_options("SHELL:--embed-file ${CMAKE_CURRENT_BINARY_DIR}/zmon.bin@zmon.bin")
     add_link_options("SHELL:--embed-file ${CMAKE_CURRENT_BINARY_DIR}/altmon.bin@altmon.bin")
     add_link_options("SHELL:--embed-file ${CMAKE_CURRENT_BINARY_DIR}/disk.bin@disk.bin")

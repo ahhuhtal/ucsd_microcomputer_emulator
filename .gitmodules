@@ -7,3 +7,6 @@
 [submodule "depends/zasm"]
 	path = tools/zasm
 	url = https://github.com/Megatokio/zasm.git
+[submodule "emulator_src/emscripten/emscripten-browser-file"]
+	path = emulator_src/emscripten/emscripten-browser-file
+	url = https://github.com/Armchair-Software/emscripten-browser-file.git
